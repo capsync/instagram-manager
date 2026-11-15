@@ -1,0 +1,47 @@
+/* InstaManager design tokens + calmer look. Loaded after the base styles in index.html (see main.jsx). */
+:root {
+  --bg: #0B0D12;
+  --surface: #12151D;
+  --surface-2: #181C26;
+  --border: rgba(255, 255, 255, 0.08);
+  --text: #F3F4F8;
+  --muted: #8B93A7;      /* readable on --surface (about 5.5:1) */
+  --accent: #E6356A;
+  --ok: #10B981;
+  --warn: #F59E0B;
+  --err: #F87171;
+  --info: #A78BFA;
+  --radius: 16px;
+  --radius-sm: 12px;
+}
+
+body { background: var(--bg); }
+
+/* Quieter background: the drifting colour glow stays, but much softer */
+body::before, body::after { opacity: 0.22; animation: none; }
+
+/* Remove decorative motion that added noise and cost battery on phones */
+.dock::before { display: none; }
+.float { animation: none; }
+.shine::after { display: none; }
+.tilt { transform: none !important; }
+.tilt::after { display: none; }
+
+/* Consistent keyboard focus */
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--info);
+  outline-offset: 2px;
+}
+
+/* Dashboard */
+.dash-grid { display: grid; gap: 10px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.dash-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; min-width: 0; }
+.dash-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; }
+.dash-clip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.dash-btn {
+  min-height: 44px; padding: 0 14px; border-radius: var(--radius-sm); border: 1px solid var(--border);
+  background: var(--surface-2); color: var(--text); font-size: 14px; font-weight: 600; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+}
+.dash-btn.primary { background: var(--accent); border-color: transparent; color: #fff; }
+.dash-link { background: none; border: none; color: var(--info); font-size: 13px; font-weight: 600; cursor: pointer; min-height: 44px; padding: 0 4px; }
