@@ -14,6 +14,7 @@ function getUserId() {
     const token = params.get('user_token');
     if (token) {
       const payload = JSON.parse(atob(token.split('.')[1]));
+      localStorage.setItem('im_token', token);
       localStorage.setItem('im_user', JSON.stringify({ id: payload.id, name: payload.name, email: payload.email }));
       window.history.replaceState({}, '', window.location.pathname);
     }
@@ -22,18 +23,38 @@ function getUserId() {
   } catch { return null; }
 }
 
+// Normal calls give up after 90s (covers a sleeping Render server waking up); uploads get 15 minutes.
+const TIMEOUT_MS = 90 * 1000, UPLOAD_TIMEOUT_MS = 15 * 60 * 1000;
+
 async function request(method, path, data, isForm = false, extraHeaders = {}) {
   const userId = getUserId();
+  let token = null;
+  try { token = localStorage.getItem('im_token'); } catch { /* storage blocked */ }
+  const auth = { ...(userId ? { 'x-user-id': userId } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), isForm ? UPLOAD_TIMEOUT_MS : TIMEOUT_MS);
   const opts = {
     method,
-    headers: isForm
-      ? { ...(userId ? { 'x-user-id': userId } : {}), ...extraHeaders }
-      : { 'Content-Type': 'application/json', ...(userId ? { 'x-user-id': userId } : {}), ...extraHeaders },
-    body: data ? (isForm ? data : JSON.stringify(data)) : undefined
+    headers: isForm ? { ...auth, ...extraHeaders } : { 'Content-Type': 'application/json', ...auth, ...extraHeaders },
+    body: data ? (isForm ? data : JSON.stringify(data)) : undefined,
+    signal: ctrl.signal
   };
-  const res = await fetch(`${BASE}${path}`, opts);
-  const json = await res.json();
-  if (!res.ok) throw new Error(json.error || `Request failed (${res.status})`);
+  let res;
+  try { res = await fetch(`${BASE}${path}`, opts); }
+  catch (e) {
+    if (e && e.name === 'AbortError') throw new Error('The server took too long to answer. It may be waking up - please try again in a moment.');
+    throw new Error('Could not reach the server. Check your internet and try again.');
+  } finally { clearTimeout(timer); }
+  let json = null;
+  try { json = await res.json(); } catch { /* not JSON (e.g. a gateway error page) */ }
+  if (res.status === 401 && json && json.code === 'session_expired') {
+    // Do NOT redirect: the page keeps the user's work and shows a "sign in again" banner instead.
+    try { localStorage.removeItem('im_token'); } catch { /* ignore */ }
+    window.dispatchEvent(new Event('im:session-expired'));
+    throw new Error(json.error || 'Your session expired. Please sign in again.');
+  }
+  if (!res.ok) throw new Error((json && json.error) || (res.status >= 500 ? 'The server had a problem. Please try again.' : `Request failed (${res.status})`));
+  if (json === null) throw new Error('The server sent an unexpected answer. Please try again.');
   return json;
 }
 
@@ -67,7 +88,7 @@ async function requestJob(method, path, data, isForm, onStatus) {
     let j;
     try { j = await request('GET', `/content/job/${start.jobId}`); errors = 0; }
     catch (e) {
-      if (/job is gone/i.test(e.message)) throw e;      // the server restarted
+      if (/job is gone|session expired/i.test(e.message)) throw e;   // server restarted / signed out
       if (++errors >= 6) throw new Error('Lost connection to the server. Check your internet and try again.');
       continue;                                         // a hiccup (or the server waking up): try again
     }
