@@ -1,4 +1,5 @@
 const express = require('express');
+const { checkPostAccess } = require('../middleware/auth');
 const path = require('path');
 const { getDB } = require('../models/db');
 const { postReel, verifyPublishingAccess, tokenFingerprint, getPermalink } = require('../services/instagramPoster');
@@ -50,6 +51,7 @@ router.get('/', async (req, res, next) => {
 // Used by the "Multi" tab: one clip -> many accounts. Each copy is then published through the normal /:id/publish route.
 router.post('/:id/clone', async (req, res, next) => {
   try {
+    { const bad = await checkPostAccess(getDB(), req.params.id, req.headers['x-user-id']); if (bad) return res.status(bad.status).json({ error: bad.error }); }
     const { account_ids } = req.body || {};
     const ids = [...new Set(Array.isArray(account_ids) ? account_ids.filter(Boolean) : [])];
     if (!ids.length) return res.status(400).json({ error: 'Pick at least one account.' });
@@ -82,6 +84,8 @@ router.post('/:id/publish', async (req, res, next) => {
     const { account_id, caption, hookText } = req.body;
     const db = getDB();
     const postId = req.params.id;
+
+    { const bad = await checkPostAccess(db, postId, req.headers['x-user-id'], account_id); if (bad) return res.status(bad.status).json({ error: bad.error }); }
 
     if (activePostPublishes.has(postId)) {
       return res.status(409).json({ error: 'This post is already publishing. Please wait a moment and refresh.' });
@@ -207,6 +211,7 @@ router.post('/:id/schedule', async (req, res, next) => {
     if (!scheduled_at) return res.status(400).json({ error: 'scheduled_at is required' });
     const db = getDB();
     const postId = req.params.id;
+    { const bad = await checkPostAccess(db, postId, req.headers['x-user-id'], account_id); if (bad) return res.status(bad.status).json({ error: bad.error }); }
     if (account_id) await db.run('UPDATE posts SET account_id=$1 WHERE id=$2', [account_id, postId]);
     if (caption !== undefined) await db.run('UPDATE posts SET final_caption=$1 WHERE id=$2', [caption, postId]);
     const post = await db.get(
@@ -251,6 +256,7 @@ router.post('/:id/link', async (req, res, next) => {
 
 router.delete('/:id', async (req, res, next) => {
   try {
+    { const bad = await checkPostAccess(getDB(), req.params.id, req.headers['x-user-id']); if (bad) return res.status(bad.status).json({ error: bad.error }); }
     await getDB().run('DELETE FROM posts WHERE id=$1', [req.params.id]);
     res.json({ message: 'Deleted' });
   } catch (err) { next(err); }
