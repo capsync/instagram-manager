@@ -12,6 +12,7 @@ const STATUS = {
 const TINT = { violet: '167,139,250', amber: '245,158,11', green: '16,185,129', red: '248,113,113' };
 
 let cache = null;   // last result, so coming back to Home is instant
+let cacheAt = 0;    // when it was loaded: fresh data is reused so switching tabs never re-downloads or flickers
 
 const reduced = () => typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 const fmt = (iso) => {
@@ -72,11 +73,11 @@ const ICONS = {
 function Stat({ label, value, tint, icon, onClick, delay }) {
   const t = TINT[tint];
   return (
-    <button type="button" className="dash-card fade-up" onClick={onClick}
+    <button type="button" className="dash-card tilt fade-up" onClick={onClick}
       style={{ textAlign: 'left', cursor: 'pointer', minHeight: 84, animationDelay: `${delay}ms`, background: `linear-gradient(145deg, rgba(${t},.20), rgba(${t},.06))`, borderColor: `rgba(${t},.35)` }}>
       <div className="dash-row">
         <div style={{ fontSize: 28, fontWeight: 800, color: '#fff', lineHeight: 1.1 }}><CountUp value={value} /></div>
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke={`rgb(${t})`} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{ICONS[icon]}</svg>
+        <svg className="bob-slow" style={{ animationDelay: `${delay}ms` }} width="24" height="24" viewBox="0 0 24 24" fill="none" stroke={`rgb(${t})`} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{ICONS[icon]}</svg>
       </div>
       <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>{label}</div>
     </button>
@@ -115,7 +116,7 @@ function Week({ posts }) {
   const [grown, setGrown] = useState(reduced());
   useEffect(() => { const id = setTimeout(() => setGrown(true), 80); return () => clearTimeout(id); }, []);
   return (
-    <div className="dash-card">
+    <div className="dash-card tilt">
       <div style={{ height: 96, display: 'flex', gap: 6, alignItems: 'flex-end' }}>
         {days.map((d, i) => (
           <button key={i} type="button" className="bar-col" onClick={() => setSel(i)} aria-label={`${d.full}: ${d.n} posted`}>
@@ -137,7 +138,8 @@ export default function Dashboard({ onNavigate }) {
   const [errors, setErrors] = useState([]);
   const inflight = useRef(false);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (force = true) => {
+    if (!force && cache && Date.now() - cacheAt < 20000) return;   // fresh enough
     if (inflight.current) return;            // no duplicate requests
     inflight.current = true;
     setLoading(true);
@@ -148,14 +150,14 @@ export default function Dashboard({ onNavigate }) {
       posts:    posts.status === 'fulfilled' && Array.isArray(posts.value) ? posts.value : (errs.push('posts'), cache?.posts || []),
       pages:    ap.status === 'fulfilled' && ap.value && Array.isArray(ap.value.pages) ? ap.value.pages : (errs.push('autopilot'), cache?.pages || []),
     };
-    if (!errs.length) cache = next;          // only remember a result that fully loaded
+    if (!errs.length) { cache = next; cacheAt = Date.now(); }   // only remember a result that fully loaded
     setData(next);
     setErrors(errs);
     setLoading(false);
     inflight.current = false;
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(false); }, [load]);
 
   if (!data) {
     return <div>{[0, 1, 2].map(i => <div key={i} className="skeleton" style={{ height: 84, marginBottom: 10 }} />)}</div>;
@@ -184,7 +186,7 @@ export default function Dashboard({ onNavigate }) {
 
   return (
     <div style={{ color: 'var(--text)' }}>
-      <div className="hero fade-up">
+      <div className="hero tilt fade-up">
         <span className="hero-blob" style={{ width: 120, height: 120, right: -30, top: -40, background: 'rgba(230,53,106,.55)' }} />
         <span className="hero-blob" style={{ width: 90, height: 90, left: -20, bottom: -40, background: 'rgba(56,189,248,.45)', animationDelay: '-4s' }} />
         <div style={{ position: 'relative' }}>
@@ -193,7 +195,7 @@ export default function Dashboard({ onNavigate }) {
               <div style={{ fontSize: 13, color: 'rgba(255,255,255,.8)' }}>{greeting()}{name ? `, ${name}` : ''}</div>
               <h1 style={{ fontSize: 22, fontWeight: 800, margin: '2px 0 0' }}>Your dashboard</h1>
             </div>
-            <button type="button" className="dash-btn" onClick={load} disabled={loading} aria-label="Refresh" style={{ background: 'rgba(255,255,255,.14)' }}>
+            <button type="button" className="dash-btn" onClick={() => load(true)} disabled={loading} aria-label="Refresh" style={{ background: 'rgba(255,255,255,.14)' }}>
               {loading ? <><span className="live-dot" /> Updating</> : 'Refresh'}
             </button>
           </div>
@@ -201,7 +203,7 @@ export default function Dashboard({ onNavigate }) {
           {accounts.length > 0 && (
             <div style={{ display: 'flex', alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
               {accounts.slice(0, 6).map((a, i) => (
-                <button key={a.id} type="button" className="avatar-btn" onClick={() => onNavigate('accounts')} aria-label={`Open ${a.username || a.name}`} style={{ animationDelay: `${i * 70}ms`, marginRight: -8 }}>
+                <button key={a.id} type="button" className="avatar-btn bob" onClick={() => onNavigate('accounts')} aria-label={`Open ${a.username || a.name}`} style={{ animationDelay: `${i * 70}ms, ${i * 400}ms`, marginRight: -8 }}>
                   <Avatar acct={a} />
                 </button>
               ))}
@@ -271,7 +273,7 @@ export default function Dashboard({ onNavigate }) {
             <Section title="Up next" delay={380} action={<button type="button" className="dash-link" onClick={() => onNavigate('history')}>All posts</button>}>
               <div style={{ display: 'grid', gap: 8 }}>
                 {upcoming.map(p => (
-                  <div key={p.id} className="dash-card dash-row">
+                  <div key={p.id} className="dash-card tilt dash-row">
                     <div style={{ minWidth: 0 }}>
                       <div className="dash-clip" style={{ fontSize: 14, fontWeight: 600 }}>{p.account_name || p.username || 'Post'}</div>
                       <div className="dash-clip" style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>{snippet(p) || 'No caption yet'}</div>
@@ -287,7 +289,7 @@ export default function Dashboard({ onNavigate }) {
             <Section title="Autopilot today" delay={420} action={<button type="button" className="dash-link" onClick={() => onNavigate('autopilot')}>Manage</button>}>
               <div style={{ display: 'grid', gap: 8 }}>
                 {pages.map(p => (
-                  <div key={p.id} className="dash-card dash-row">
+                  <div key={p.id} className="dash-card tilt dash-row">
                     <div className="dash-row" style={{ justifyContent: 'flex-start', gap: 12, minWidth: 0 }}>
                       <Ring done={p.today?.posted ?? 0} target={p.today?.target ?? 0} />
                       <div style={{ minWidth: 0 }}>
@@ -308,7 +310,7 @@ export default function Dashboard({ onNavigate }) {
             <Section title="Recent activity" delay={460}>
               <div style={{ display: 'grid', gap: 8 }}>
                 {recent.map(p => (
-                  <div key={p.id} className="dash-card dash-row">
+                  <div key={p.id} className="dash-card tilt dash-row">
                     <div style={{ minWidth: 0 }}>
                       <div className="dash-clip" style={{ fontSize: 14, fontWeight: 600 }}>{p.account_name || p.username || 'Post'}</div>
                       <div className="dash-clip" style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>{snippet(p) || fmt(p.posted_at || p.scheduled_at || p.created_at)}</div>
