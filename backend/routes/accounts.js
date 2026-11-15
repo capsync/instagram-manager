@@ -1,4 +1,5 @@
 const express = require('express');
+const { checkAccountAccess } = require('../middleware/auth');
 const { v4: uuidv4 } = require('uuid');
 const { getDB } = require('../models/db');
 const { verifyToken, fetchProfilePicture } = require('../services/instagramPoster');
@@ -65,6 +66,7 @@ router.post('/:id/fallback-session', async (req, res, next) => {
       return res.status(400).json({ error: 'username and password are required' });
     }
     const db = getDB();
+    { const bad = await checkAccountAccess(db, req.params.id, req.headers['x-user-id']); if (bad) return res.status(bad.status).json({ error: bad.error }); }
     const account = await db.get('SELECT id, name, username, ig_user_id FROM accounts WHERE id=$1', [req.params.id]);
     if (!account) return res.status(404).json({ error: 'Account not found' });
     const { sessionPath } = await createFallbackSession(account.id, username, password);
@@ -79,6 +81,7 @@ router.post('/:id/fallback-session', async (req, res, next) => {
 router.delete('/:id/fallback-session', async (req, res, next) => {
   try {
     const db = getDB();
+    { const bad = await checkAccountAccess(db, req.params.id, req.headers['x-user-id']); if (bad) return res.status(bad.status).json({ error: bad.error }); }
     const account = await db.get('SELECT id, fallback_session_path FROM accounts WHERE id=$1', [req.params.id]);
     if (!account) return res.status(404).json({ error: 'Account not found' });
     const sessionPaths = [account.fallback_session_path, getSessionPath(account.id), getLegacySessionPath(account.id)].filter(Boolean);
@@ -146,6 +149,7 @@ router.put('/:id', async (req, res, next) => {
   try {
     const { caption_style, caption_prompt, access_token, token_scopes, name } = req.body;
     const db = getDB();
+    { const bad = await checkAccountAccess(db, req.params.id, req.headers['x-user-id']); if (bad) return res.status(bad.status).json({ error: bad.error }); }
     if (access_token) {
       const existing = await db.get('SELECT ig_user_id FROM accounts WHERE id=$1', [req.params.id]);
       if (existing) await verifyToken(existing.ig_user_id, access_token);
@@ -191,6 +195,7 @@ router.put('/:id', async (req, res, next) => {
 
 router.delete('/:id', async (req, res, next) => {
   try {
+    { const bad = await checkAccountAccess(getDB(), req.params.id, req.headers['x-user-id']); if (bad) return res.status(bad.status).json({ error: bad.error }); }
     await getDB().run('DELETE FROM accounts WHERE id=$1', [req.params.id]);
     res.json({ message: 'Deleted' });
   } catch (err) { next(err); }
