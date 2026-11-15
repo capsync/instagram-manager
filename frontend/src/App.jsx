@@ -106,6 +106,53 @@ export default function App() {
     }
   }, []);
 
+  // 3D tilt: one listener for every element with class "tilt" (cards). Tilts toward the finger/cursor and moves a light across it.
+  useEffect(() => {
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    let cur = null, raf = 0;
+    const reset = () => {
+      if (!cur) return;
+      cur.classList.remove('tilting');
+      cur.style.setProperty('--rx', '0deg'); cur.style.setProperty('--ry', '0deg'); cur.style.setProperty('--glow', '0');
+      cur = null;
+    };
+    const onMove = (e) => {
+      const el = e.target && e.target.closest ? e.target.closest('.tilt') : null;
+      if (!el || e.target.closest('input,textarea,select,[contenteditable]')) return reset();
+      if (cur && cur !== el) reset();
+      cur = el;
+      const cx = e.clientX, cy = e.clientY;
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        if (!cur) return;
+        const r = cur.getBoundingClientRect();
+        const x = cx - r.left, y = cy - r.top;
+        cur.classList.add('tilting');
+        cur.style.setProperty('--ry', ((x / r.width - 0.5) * 2 * 6).toFixed(2) + 'deg');
+        cur.style.setProperty('--rx', (-(y / r.height - 0.5) * 2 * 6).toFixed(2) + 'deg');
+        cur.style.setProperty('--mx', x.toFixed(0) + 'px');
+        cur.style.setProperty('--my', y.toFixed(0) + 'px');
+        cur.style.setProperty('--glow', '1');
+      });
+    };
+    document.addEventListener('pointermove', onMove, { passive: true });
+    document.addEventListener('pointerdown', onMove, { passive: true });
+    document.addEventListener('pointerup', reset, { passive: true });
+    document.addEventListener('pointercancel', reset, { passive: true });
+    document.addEventListener('pointerleave', reset);
+    window.addEventListener('scroll', reset, { passive: true });
+    return () => {
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerdown', onMove);
+      document.removeEventListener('pointerup', reset);
+      document.removeEventListener('pointercancel', reset);
+      document.removeEventListener('pointerleave', reset);
+      window.removeEventListener('scroll', reset);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, []);
+
   // warm up the other tabs once the first screen is idle
   useEffect(() => {
     if (checking) return;
@@ -140,7 +187,7 @@ export default function App() {
         </div>
       )}
       {/* Header */}
-      <header style={s.header}>
+      <header style={s.header} className="app-header">
         <div style={s.logo}>
           <div style={s.logoMark} className="float">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
