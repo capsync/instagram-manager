@@ -22,10 +22,7 @@ body::before, body::after { opacity: 0.45; }   /* soft colour glow; the base sty
 
 /* Remove decorative motion that added noise and cost battery on phones */
 .dock::before { display: none; }
-.float { animation: none; }
 .shine::after { display: none; }
-.tilt { transform: none !important; }
-.tilt::after { display: none; }
 
 /* Consistent keyboard focus */
 button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
@@ -65,3 +62,59 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .hero-blob, .live-dot, .avatar-btn { animation: none !important; }
   .bar { transition: none; }
 }
+
+/* ===== v3: lighter palette, clearer links, depth, floating, smoothness ===== */
+:root {
+  --bg: #161B35;
+  --surface: #1E2442;
+  --surface-2: #283056;
+  --border: rgba(255, 255, 255, 0.14);
+  --muted: #B4BCD6;
+  --info: #C4B5FD;
+  --link: #E9E2FF;
+}
+body { background: var(--bg); }
+body::before, body::after { opacity: 0.6; }
+
+/* Links: clear, bright and tappable */
+a { color: #9CCBFF; }
+.dash-link {
+  background: rgba(167, 139, 250, 0.20); color: var(--link); border: 1px solid rgba(196, 181, 253, 0.55);
+  border-radius: 999px; padding: 0 16px; font-size: 13px; font-weight: 700; min-height: 40px;
+  box-shadow: 0 6px 16px -8px rgba(167, 139, 250, 0.8);
+  transition: transform .2s var(--ease), background .2s, box-shadow .2s;
+}
+.dash-link:active { background: rgba(167, 139, 250, 0.35); }
+@media (hover: hover) { .dash-link:hover { background: rgba(167, 139, 250, 0.32); box-shadow: 0 8px 20px -6px rgba(167, 139, 250, 1); } }
+
+/* Depth: cards sit on a lifted, layered shadow with a bright top edge */
+.dash-card, .hero {
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.16), 0 14px 28px -18px rgba(0,0,0,.75), 0 2px 6px -2px rgba(0,0,0,.35);
+}
+.dash-btn.primary { box-shadow: 0 12px 26px -10px rgba(230,53,106,.9), inset 0 1px 0 rgba(255,255,255,.3); background: linear-gradient(135deg, #F0457A, #B866F5); }
+
+/* Floating */
+@keyframes bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
+.bob { animation: popAvatar .4s var(--ease) both, bob 4.5s ease-in-out .6s infinite; }
+.bob-slow { animation: bob 5.5s ease-in-out infinite; }
+.float { animation: bob 5s ease-in-out infinite; }
+
+/* Bottom bar + header: brighter, clear active state */
+.dock { background: rgba(36, 44, 82, 0.92) !important; border: 1px solid rgba(255,255,255,.16); }
+
+/* Smoothness on phones: no live blur (it stutters on many Android devices), instant taps, contained layouts */
+@media (max-width: 700px) {
+  .app-header, .dock { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+  .app-header { background: rgba(30, 36, 66, 0.97) !important; }
+  .dock { background: rgba(36, 44, 82, 0.98) !important; }
+}
+button, a, [role="button"] { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+.dash-card, .hero { contain: layout style; }
+.tab-enter { will-change: auto; }
+@media (prefers-reduced-motion: reduce) { .bob, .bob-slow, .float { animation: none !important; } }
+
+/* Keep the 3D tilt while hovering (mouse) or pressing (finger) */
+@media (hover: hover) {
+  .tilt.dash-card:hover { transform: perspective(900px) rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg)) translateY(-3px); }
+}
+button.tilt:not(:disabled):active { transform: perspective(900px) rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg)) scale(.975); }
