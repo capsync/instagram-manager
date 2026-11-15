@@ -105,6 +105,9 @@ async function initPostgres() {
       FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE SET NULL
     )
   `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_accounts_user ON accounts (user_id)`).catch(() => {});
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_posts_account_status ON posts (account_id, status)`).catch(() => {});
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_posts_status_sched ON posts (status, scheduled_at)`).catch(() => {});
 
   for (const c of ['guard_level TEXT', 'guard_reasons TEXT', 'guard_ack INTEGER DEFAULT 0', 'credit_handle TEXT', 'ig_permalink TEXT']) {
     await pool.query(`ALTER TABLE posts ADD COLUMN IF NOT EXISTS ${c}`).catch(() => {});
