@@ -82,7 +82,7 @@ function heavy(handler, opts = {}) {
     const runHeavy = w ? (fn) => fn().finally(() => remoteRender.release(w)) : (fn) => lane.run(fn);
     if (req.headers['x-async'] !== '1') return runHeavy(() => handler(req, res, next)).catch(next);
     const id = uuidv4();
-    const job = { status: 'queued', queuedAt: Date.now() };
+    const job = { status: 'queued', queuedAt: Date.now(), userId: req.headers['x-user-id'] || null };
     jobs.set(id, job);
     const fail = (err) => { job.finishedAt = Date.now(); job.status = 'error'; job.code = 500; job.body = { error: err?.message || 'Failed' }; };
     const fakeRes = {
@@ -99,6 +99,7 @@ function heavy(handler, opts = {}) {
 
 router.get('/job/:id', (req, res) => {
   const j = jobs.get(req.params.id);
+  if (j && j.userId && j.userId !== req.headers['x-user-id']) return res.status(404).json({ error: 'That job is gone (the server may have restarted). Please try again.' });
   if (!j) return res.status(404).json({ error: 'That job is gone (the server may have restarted). Please try again.' });
   const base = {
     status: j.status,
