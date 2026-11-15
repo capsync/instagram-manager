@@ -62,6 +62,7 @@ function getUser() {
     if (token) {
       const payload = JSON.parse(atob(token.split('.')[1]));
       const user = { id: payload.id, name: payload.name, email: payload.email };
+      localStorage.setItem('im_token', token);
       localStorage.setItem('im_user', JSON.stringify(user));
       window.history.replaceState({}, '', window.location.pathname);
       return user;
@@ -78,6 +79,15 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [showMenu, setShowMenu] = useState(false);
   const [checking, setChecking] = useState(true);
+  const [expired, setExpired] = useState(false);
+
+  useEffect(() => {
+    const on = () => setExpired(true);
+    const back = (e) => { if (e.key === 'im_token' && e.newValue) setExpired(false); };   // signed in again in another tab
+    window.addEventListener('im:session-expired', on);
+    window.addEventListener('storage', back);
+    return () => { window.removeEventListener('im:session-expired', on); window.removeEventListener('storage', back); };
+  }, []);
 
   useEffect(() => {
     const u = getUser();
@@ -147,6 +157,7 @@ export default function App() {
 
   function handleLogout() {
     localStorage.removeItem('im_user');
+    localStorage.removeItem('im_token');
     window.location.href = AUTH_URL;
   }
 
@@ -161,6 +172,12 @@ export default function App() {
 
   return (
     <div style={s.root}>
+      {expired && (
+        <div role="alert" style={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 1000, padding: 'calc(env(safe-area-inset-top, 0px) + 10px) 14px 10px', background: '#7f1d1d', color: '#fff', fontSize: 14, display: 'flex', gap: 10, alignItems: 'center', justifyContent: 'space-between' }}>
+          <span>Your session expired. Your work on this screen is still here - sign in again, then retry.</span>
+          <a href={AUTH_URL} target="_blank" rel="noreferrer" style={{ color: '#fff', fontWeight: 700, minHeight: 44, display: 'inline-flex', alignItems: 'center', whiteSpace: 'nowrap' }}>Sign in</a>
+        </div>
+      )}
       {/* Header */}
       <header style={s.header}>
         <div style={s.logo}>
