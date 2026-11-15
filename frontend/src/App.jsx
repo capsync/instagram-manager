@@ -1,6 +1,7 @@
 import React, { useState, useEffect, lazy, Suspense } from 'react';
 import NewPost from './components/NewPost';
 import QuickPost from './components/QuickPost';
+import Dashboard from './components/Dashboard';
 
 // Only the Create tab loads up front. The other tabs load in the background while you work,
 // so switching to them is instant instead of waiting for a download.
@@ -20,36 +21,41 @@ function TabFallback() {
 }
 
 const TABS = [
+  { id: 'dashboard', label: 'Home', icon: (active) => (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+      <path d="M4 11l8-7 8 7v8a2 2 0 01-2 2h-3v-6H9v6H6a2 2 0 01-2-2v-8z" stroke={active ? '#fff' : '#8B93A7'} strokeWidth="2" strokeLinejoin="round"/>
+    </svg>
+  )},
   { id: 'new', label: 'Create', icon: (active) => (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-      <circle cx="12" cy="12" r="9" stroke={active ? '#fff' : '#555'} strokeWidth="2"/>
-      <path d="M12 8v8M8 12h8" stroke={active ? '#fff' : '#555'} strokeWidth="2" strokeLinecap="round"/>
+      <circle cx="12" cy="12" r="9" stroke={active ? '#fff' : '#8B93A7'} strokeWidth="2"/>
+      <path d="M12 8v8M8 12h8" stroke={active ? '#fff' : '#8B93A7'} strokeWidth="2" strokeLinecap="round"/>
     </svg>
   )},
   { id: 'multi', label: 'Multi', icon: (active) => (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-      <rect x="3" y="7" width="12" height="12" rx="3" stroke={active ? '#fff' : '#555'} strokeWidth="2"/>
-      <path d="M9 3h9a3 3 0 013 3v9" stroke={active ? '#fff' : '#555'} strokeWidth="2" strokeLinecap="round"/>
+      <rect x="3" y="7" width="12" height="12" rx="3" stroke={active ? '#fff' : '#8B93A7'} strokeWidth="2"/>
+      <path d="M9 3h9a3 3 0 013 3v9" stroke={active ? '#fff' : '#8B93A7'} strokeWidth="2" strokeLinecap="round"/>
     </svg>
   )},
   { id: 'history', label: 'Posts', icon: (active) => (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-      <rect x="3" y="3" width="7" height="7" rx="2" stroke={active ? '#fff' : '#555'} strokeWidth="2"/>
-      <rect x="14" y="3" width="7" height="7" rx="2" stroke={active ? '#fff' : '#555'} strokeWidth="2"/>
-      <rect x="3" y="14" width="7" height="7" rx="2" stroke={active ? '#fff' : '#555'} strokeWidth="2"/>
-      <rect x="14" y="14" width="7" height="7" rx="2" stroke={active ? '#fff' : '#555'} strokeWidth="2"/>
+      <rect x="3" y="3" width="7" height="7" rx="2" stroke={active ? '#fff' : '#8B93A7'} strokeWidth="2"/>
+      <rect x="14" y="3" width="7" height="7" rx="2" stroke={active ? '#fff' : '#8B93A7'} strokeWidth="2"/>
+      <rect x="3" y="14" width="7" height="7" rx="2" stroke={active ? '#fff' : '#8B93A7'} strokeWidth="2"/>
+      <rect x="14" y="14" width="7" height="7" rx="2" stroke={active ? '#fff' : '#8B93A7'} strokeWidth="2"/>
     </svg>
   )},
   { id: 'autopilot', label: 'Autopilot', icon: (active) => (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-      <circle cx="12" cy="12" r="9" stroke={active ? '#fff' : '#555'} strokeWidth="2"/>
-      <path d="M12 7v5l3 2" stroke={active ? '#fff' : '#555'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+      <circle cx="12" cy="12" r="9" stroke={active ? '#fff' : '#8B93A7'} strokeWidth="2"/>
+      <path d="M12 7v5l3 2" stroke={active ? '#fff' : '#8B93A7'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
     </svg>
   )},
   { id: 'accounts', label: 'Accounts', icon: (active) => (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-      <circle cx="12" cy="8" r="4" stroke={active ? '#fff' : '#555'} strokeWidth="2"/>
-      <path d="M4 20c0-4 3.6-7 8-7s8 3 8 7" stroke={active ? '#fff' : '#555'} strokeWidth="2" strokeLinecap="round"/>
+      <circle cx="12" cy="8" r="4" stroke={active ? '#fff' : '#8B93A7'} strokeWidth="2"/>
+      <path d="M4 20c0-4 3.6-7 8-7s8 3 8 7" stroke={active ? '#fff' : '#8B93A7'} strokeWidth="2" strokeLinecap="round"/>
     </svg>
   )},
 ];
@@ -75,7 +81,7 @@ function getUser() {
 const AUTH_URL = 'https://instamanager-auth.onrender.com';
 
 export default function App() {
-  const [tab, setTab] = useState('new');
+  const [tab, setTab] = useState('dashboard');
   const [user, setUser] = useState(null);
   const [showMenu, setShowMenu] = useState(false);
   const [checking, setChecking] = useState(true);
@@ -100,53 +106,6 @@ export default function App() {
     }
   }, []);
 
-  // 3D tilt: one listener for every element with class "tilt" (cards). Tilts toward the finger/cursor and moves a light across it.
-  useEffect(() => {
-    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-    let cur = null, raf = 0;
-    const reset = () => {
-      if (!cur) return;
-      cur.classList.remove('tilting');
-      cur.style.setProperty('--rx', '0deg'); cur.style.setProperty('--ry', '0deg'); cur.style.setProperty('--glow', '0');
-      cur = null;
-    };
-    const onMove = (e) => {
-      const el = e.target && e.target.closest ? e.target.closest('.tilt') : null;
-      if (!el || e.target.closest('input,textarea,select,[contenteditable]')) return reset();
-      if (cur && cur !== el) reset();
-      cur = el;
-      const cx = e.clientX, cy = e.clientY;
-      if (raf) return;
-      raf = requestAnimationFrame(() => {
-        raf = 0;
-        if (!cur) return;
-        const r = cur.getBoundingClientRect();
-        const x = cx - r.left, y = cy - r.top;
-        cur.classList.add('tilting');
-        cur.style.setProperty('--ry', ((x / r.width - 0.5) * 2 * 6).toFixed(2) + 'deg');
-        cur.style.setProperty('--rx', (-(y / r.height - 0.5) * 2 * 6).toFixed(2) + 'deg');
-        cur.style.setProperty('--mx', x.toFixed(0) + 'px');
-        cur.style.setProperty('--my', y.toFixed(0) + 'px');
-        cur.style.setProperty('--glow', '1');
-      });
-    };
-    document.addEventListener('pointermove', onMove, { passive: true });
-    document.addEventListener('pointerdown', onMove, { passive: true });
-    document.addEventListener('pointerup', reset, { passive: true });
-    document.addEventListener('pointercancel', reset, { passive: true });
-    document.addEventListener('pointerleave', reset);
-    window.addEventListener('scroll', reset, { passive: true });
-    return () => {
-      document.removeEventListener('pointermove', onMove);
-      document.removeEventListener('pointerdown', onMove);
-      document.removeEventListener('pointerup', reset);
-      document.removeEventListener('pointercancel', reset);
-      document.removeEventListener('pointerleave', reset);
-      window.removeEventListener('scroll', reset);
-      if (raf) cancelAnimationFrame(raf);
-    };
-  }, []);
-
   // warm up the other tabs once the first screen is idle
   useEffect(() => {
     if (checking) return;
@@ -154,6 +113,8 @@ export default function App() {
     const id = window.requestIdleCallback ? window.requestIdleCallback(warm, { timeout: 4000 }) : setTimeout(warm, 1500);
     return () => { window.cancelIdleCallback ? window.cancelIdleCallback(id) : clearTimeout(id); };
   }, [checking]);
+
+  function goTab(id) { setTab(id); window.scrollTo({ top: 0, behavior: 'smooth' }); }
 
   function handleLogout() {
     localStorage.removeItem('im_user');
@@ -232,6 +193,7 @@ export default function App() {
         {/* NewPost stays mounted so in-progress work isn't lost when switching tabs */}
         <div className="tab-enter" style={{ display: tab === 'new' ? 'block' : 'none' }}><NewPost /></div>
         <div className="tab-enter" style={{ display: tab === 'multi' ? 'block' : 'none' }}><QuickPost /></div>
+        {tab === 'dashboard' && <div key="dashboard" className="tab-enter"><Dashboard onNavigate={goTab} /></div>}
         <Suspense fallback={<TabFallback />}>
           {tab === 'history'  && <div key="history"  className="tab-enter"><PostHistory /></div>}
           {tab === 'autopilot' && <div key="autopilot" className="tab-enter"><Autopilot /></div>}
@@ -249,7 +211,7 @@ export default function App() {
                 <span style={{ position: 'absolute', inset: 0, borderRadius: 14, background: 'linear-gradient(135deg,#e6356a,#a855f7)', boxShadow: '0 6px 18px rgba(230,53,106,.35)', opacity: active ? 1 : 0, transform: active ? 'scale(1)' : 'scale(.6)', transition: 'opacity .25s, transform .35s cubic-bezier(.34,1.56,.64,1)' }} />
                 <span style={{ position: 'relative', display: 'flex' }}>{t.icon(active)}</span>
               </div>
-              <span style={{ ...s.navLabel, color: active ? '#fff' : '#555', opacity: active ? 1 : .8 }}>{t.label}</span>
+              <span style={{ ...s.navLabel, color: active ? '#fff' : '#8B93A7', opacity: active ? 1 : .8 }}>{t.label}</span>
             </button>
           );
         })}
@@ -274,8 +236,8 @@ const s = {
   menuLogout: { width: '100%', padding: '12px 16px', background: 'none', border: 'none', color: '#EF4444', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, fontWeight: 500 },
   overlay:    { position: 'fixed', inset: 0, zIndex: 150 },
   main:       { flex: 1, maxWidth: 600, margin: '0 auto', width: '100%', padding: '16px 16px 16px', overflowX: 'hidden' },
-  nav:        { position: 'fixed', left: 12, right: 12, bottom: 'calc(10px + env(safe-area-inset-bottom, 0px))', maxWidth: 560, margin: '0 auto', height: 68, borderRadius: 26, background: 'rgba(16,18,26,0.74)', backdropFilter: 'blur(24px) saturate(150%)', WebkitBackdropFilter: 'blur(24px) saturate(150%)', boxShadow: '0 20px 44px -14px rgba(0,0,0,.85), 0 0 46px -12px rgba(168,85,247,.4), inset 0 1px 0 rgba(255,255,255,.09)', display: 'flex', alignItems: 'center', justifyContent: 'space-around', zIndex: 100 },
-  navBtn:     { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, background: 'none', border: 'none', cursor: 'pointer', padding: '8px 0' },
+  nav:        { position: 'fixed', left: 8, right: 8, bottom: 'calc(10px + env(safe-area-inset-bottom, 0px))', maxWidth: 560, margin: '0 auto', height: 68, borderRadius: 26, background: 'rgba(16,18,26,0.74)', backdropFilter: 'blur(24px) saturate(150%)', WebkitBackdropFilter: 'blur(24px) saturate(150%)', boxShadow: '0 20px 44px -14px rgba(0,0,0,.85), 0 0 46px -12px rgba(168,85,247,.4), inset 0 1px 0 rgba(255,255,255,.09)', display: 'flex', alignItems: 'center', justifyContent: 'space-around', zIndex: 100 },
+  navBtn:     { flex: 1, minWidth: 0, minHeight: 44, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, background: 'none', border: 'none', cursor: 'pointer', padding: '8px 0' },
   navIcon:    { width: 44, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center' },
-  navLabel:   { fontSize: 10, fontWeight: 600, letterSpacing: '0.3px', transition: 'color 0.2s', textTransform: 'uppercase' },
+  navLabel:   { fontSize: 10, fontWeight: 600, transition: 'color 0.2s', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
 };
