@@ -11,6 +11,7 @@ const postRoutes = require('./routes/posts');
 const autopilotRoutes = require('./routes/autopilot');
 const authRoutes = require('./routes/auth');
 const { errorHandler } = require('./middleware/errorHandler');
+const { attachUser } = require('./middleware/auth');
 const { startScheduler } = require('./services/scheduler');
 const { startAutopilot } = require('./services/autopilot');
 const logger = require('./services/logger');
@@ -32,6 +33,7 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use('/uploads', express.static(uploadDir));
 
+app.use('/api', attachUser);   // verifies the login token; sets the real user id for every /api route
 app.use('/api/accounts', accountRoutes);
 app.use('/api/content', contentRoutes);
 app.use('/api/posts', postRoutes);
