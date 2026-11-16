@@ -17,7 +17,7 @@ const REVIEW_AT = 30;
 // Edit these lists freely. Matched as whole words, case-insensitive.
 const HARD_TERMS = [
   // sports leagues + broadcasters
-  'nba', 'nfl', 'mlb', 'nhl', 'ufc', 'wwe', 'fifa', 'uefa', 'premier league', 'champions league', 'espn', 'sky sports', 'bein sports', 'dazn',
+  'nba', 'nfl', 'mlb', 'nhl', 'ufc', 'wwe', 'fifa', 'premier league', 'champions league', 'espn', 'sky sports', 'bein sports', 'dazn',
   // full-length / official uploads
   'official music video', 'vevo', 'full movie', 'full episode', 'full match', 'full concert', 'full set', 'official trailer'
 ];
@@ -27,8 +27,20 @@ const MEDIUM_TERMS = [
   // studios / networks / streamers
   'netflix', 'hbo', 'disney', 'marvel', 'warner bros', 'universal pictures', 'paramount', 'sony pictures', 'prime video', 'apple tv', 'nickelodeon', 'cartoon network', 'mtv', 'bbc', 'cnn',
   // labels
-  'universal music', 'sony music', 'warner records', 'atlantic records', 'def jam', 'republic records', 'interscope'
+  'sony music'
 ];
+// Universal Music Group + Warner Music Group: never processed. Any mention in the source text blocks the clip.
+// Edit freely. Whole-word, case-insensitive. (Labels only; artist names are handled by the label lookup below.)
+const LABEL_TERMS = [
+  // Universal Music Group
+  'universal music', 'universal music group', 'umg', 'republic records', 'interscope', 'def jam', 'capitol records', 'capitol music group',
+  'island records', 'motown', 'geffen', 'polydor', 'virgin records', 'virgin music', 'emi records', 'emi music', 'decca records', 'mercury records',
+  'verve records', 'deutsche grammophon', 'abkco', 'spinefarm', 'umgi',
+  // Warner Music Group
+  'warner music', 'warner music group', 'wmg', 'warner records', 'atlantic records', 'elektra records', 'parlophone', 'rhino records',
+  'sire records', 'reprise records', 'warner chappell', 'warner chappell music', '300 entertainment', 'nonesuch', 'fueled by ramen', 'roadrunner records', 'east west records', 'big beat records'
+];
+
 // When a festival/event name appears together with one of these it is the official stream, not a fan clip.
 const OFFICIAL_STREAM = /\b(live ?stream|livestream|official|full set|broadcast|presented by)\b/i;
 const OTHER_APP_TAGS = /\b(tiktok|douyin|snapchat|likee|kuaishou|capcut|vm\.tiktok)\b/i;
@@ -37,6 +49,7 @@ const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const termRe = (t) => new RegExp(`(^|[^a-z0-9])${esc(t).replace(/\s+/g, '\\s+')}([^a-z0-9]|$)`, 'i');
 const HARD_RE = HARD_TERMS.map(t => [t, termRe(t)]);
 const MED_RE = MEDIUM_TERMS.map(t => [t, termRe(t)]);
+const LABEL_RE = LABEL_TERMS.map(t => [t, termRe(t)]);
 
 function levelFor(score) { return score >= BLOCK_AT ? 'blocked' : 'clear'; }
 
@@ -74,6 +87,7 @@ function metadataSignals(meta = {}, fileTags = '') {
   const hits = [];
   const text = [meta.title, meta.description, meta.uploader, meta.channel, meta.track, meta.artist, (meta.tags || []).join(' '), fileTags].filter(Boolean).join('\n');
   if (text) {
+    for (const [t, re] of LABEL_RE) if (re.test(text)) hits.push({ points: 70, why: `Major-label music (Universal / Warner): “${t}”` });
     for (const [t, re] of HARD_RE) if (re.test(text)) hits.push({ points: 70, why: `Source mentions “${t}” (broadcast / official content)` });
     for (const [t, re] of MED_RE) {
       if (!re.test(text)) continue;
@@ -121,6 +135,37 @@ async function visionSignals(videoPath) {
   }
 }
 
+// ── label lookup (text only) ─────────────────────────────────────────────────
+// Asks Gemini which label group owns the song named in the source text / transcript.
+// It cannot hear the audio, so a song that is not named anywhere in the text is not caught here.
+async function labelSignals(meta = {}, transcript = '') {
+  if (!process.env.GEMINI_API_KEY) return [];
+  const text = [meta.artist && `Artist: ${meta.artist}`, meta.track && `Track: ${meta.track}`, meta.title && `Title: ${meta.title}`,
+    meta.description && `Caption: ${String(meta.description).slice(0, 1200)}`, (meta.tags || []).length && `Tags: ${meta.tags.join(', ')}`,
+    transcript && `Words heard in the audio: ${String(transcript).slice(0, 1500)}`].filter(Boolean).join('\n');
+  if (text.length < 8) return [];
+  try {
+    const { GoogleGenerativeAI } = require('@google/generative-ai');
+    const model = new GoogleGenerativeAI(process.env.GEMINI_API_KEY).getGenerativeModel({ model: process.env.GEMINI_MODEL || 'gemini-2.5-flash' });
+    const r = await model.generateContent({ contents: [{ role: 'user', parts: [{ text:
+      'Below is the text that came with a short video. If it names a specific song or recording that is probably playing in the video (or the words heard are clearly the lyrics of a known song), identify the recording and say which record company group owns the master recording today. ' +
+      'Use only what you are reasonably sure of. Do not guess from the artist alone if the artist has moved labels or is independent.\n\n' + text +
+      '\n\nReturn ONLY JSON: {"song_identified":false,"artist":"","track":"","label_group":"UMG|WMG|SONY|other|unknown","confidence":"high|medium|low"}' }] }] });
+    const m = r.response.text().replace(/```json|```/g, '').match(/\{[\s\S]*\}/);
+    if (!m) return [];
+    const v = JSON.parse(m[0]);
+    const g = String(v.label_group || '').toUpperCase();
+    if (v.song_identified && (g === 'UMG' || g === 'WMG') && /high|medium/i.test(v.confidence || '')) {
+      const name = [v.artist, v.track].filter(Boolean).join(' – ').slice(0, 80) || 'a known song';
+      return [{ points: 70, why: `Music looks like ${name} (${g === 'UMG' ? 'Universal Music Group' : 'Warner Music Group'})` }];
+    }
+    return [];
+  } catch (e) {
+    logger.warn('Guard label check skipped: ' + e.message);
+    return [];
+  }
+}
+
 function build(hits, credit) {
   // Strongest signals first; sum is capped so one thing can't exceed 100
   const sorted = [...hits].sort((a, b) => b.points - a.points);
@@ -133,10 +178,10 @@ function build(hits, credit) {
 }
 
 /** Main entry. Never throws: a failed check returns 'clear' with a note rather than stopping posts. */
-async function assessClip({ videoPath, meta = {}, url = '', isRepost = false, credit = null }) {
+async function assessClip({ videoPath, meta = {}, url = '', isRepost = false, credit = null, transcript = '' }) {
   try {
-    const [fileTags, vision] = await Promise.all([probeTags(videoPath), visionSignals(videoPath)]);
-    const hits = [...metadataSignals(meta, fileTags), ...vision];
+    const [fileTags, vision, label] = await Promise.all([probeTags(videoPath), visionSignals(videoPath), labelSignals(meta, transcript)]);
+    const hits = [...metadataSignals(meta, fileTags), ...vision, ...label];
     return build(hits, credit);
   } catch (e) {
     logger.warn('Guard check failed, not blocking: ' + e.message);
@@ -165,4 +210,4 @@ function gateDecision(row, body = {}) {
   return { status: 422, error: `Blocked by the safety check: ${why}` };   // any non-clear result (incl. old 'review' rows) does not post
 }
 
-module.exports = { assessClip, extractCredit, addReason, gateDecision, metadataSignals, build, levelFor, HARD_TERMS, MEDIUM_TERMS, BLOCK_AT, REVIEW_AT };
+module.exports = { assessClip, labelSignals, LABEL_TERMS, extractCredit, addReason, gateDecision, metadataSignals, build, levelFor, HARD_TERMS, MEDIUM_TERMS, BLOCK_AT, REVIEW_AT };
