@@ -63,6 +63,7 @@ export default function Autopilot() {
 function PageCard({ page, onChange }) {
   const [open, setOpen] = useState(false);        // settings
   const [showQ, setShowQ] = useState(false);      // queue list
+  const [showS, setShowS] = useState(false);      // source accounts
   const [items, setItems] = useState([]);
   const [links, setLinks] = useState('');
   const [msg, setMsg] = useState('');
@@ -135,6 +136,7 @@ function PageCard({ page, onChange }) {
 
       <div style={{ display: 'flex', gap: 14, marginTop: 14 }}>
         <button type="button" onClick={() => setShowQ(v => !v)} style={st.link}>{showQ ? '▲ Queue' : '▼ Queue'}</button>
+        <button type="button" onClick={() => setShowS(v => !v)} style={st.link}>{showS ? '▲ Sources' : '▼ Sources'}</button>
         <button type="button" onClick={() => setOpen(v => !v)} style={st.link}>{open ? '▲ Settings' : '▼ Settings'}</button>
       </div>
 
@@ -154,6 +156,8 @@ function PageCard({ page, onChange }) {
           ))}
         </div>
       )}
+
+      {showS && <SourcesPanel page={page} onChange={onChange} />}
 
       {open && (
         <div style={{ marginTop: 12, borderTop: '1px solid #181818', paddingTop: 12 }}>
@@ -192,6 +196,82 @@ function PageCard({ page, onChange }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function ago(iso) {
+  if (!iso) return 'not scanned yet';
+  const m = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`;
+}
+const PLAT = { instagram: 'IG', youtube: 'YT', tiktok: 'TT' };
+
+// Public accounts to pull videos from. The server scans them on its own and keeps this page's queue topped up.
+function SourcesPanel({ page, onChange }) {
+  const [list, setList] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [text, setText] = useState('');
+  const [plat, setPlat] = useState('instagram');
+  const [msg, setMsg] = useState('');
+  const [err, setErr] = useState('');
+  const [working, setWorking] = useState(false);
+
+  const load = useCallback(async () => {
+    try { const r = await api.autopilotSources(page.id); setList(r.sources || []); setBusy(!!r.busy); return r; } catch { return null; }
+  }, [page.id]);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => {            // while the server is scanning, check every 5 s, then refresh the queue numbers
+    if (!busy) return;
+    const t = setInterval(async () => { const r = await load(); if (r && !r.busy) onChange(); }, 5000);
+    return () => clearInterval(t);
+  }, [busy, load, onChange]);
+
+  const act = async (fn, okMsg) => {
+    setErr(''); setMsg(''); setWorking(true);
+    try { const r = await fn(); if (okMsg) setMsg(okMsg(r)); await load(); setBusy(true); }
+    catch (e) { setErr(e.message || 'Something went wrong.'); }
+    finally { setWorking(false); }
+  };
+  const add = () => act(() => api.autopilotAddSources(page.id, text, plat), r => {
+    if (r.added) setText('');
+    return [r.added ? `Added ${r.added}. Pulling videos now…` : 'Nothing new added.', r.duplicates ? `${r.duplicates} already there.` : '', r.invalid.length ? `Skipped: ${r.invalid.join(', ')}` : '', r.limit ? 'Max 20 sources per page.' : ''].filter(Boolean).join(' ');
+  });
+
+  return (
+    <div style={{ marginTop: 10 }}>
+      <textarea value={text} onChange={e => setText(e.target.value)} rows={3} id={`ap-src-${page.id}`} name="sources"
+        placeholder={'Public accounts to pull videos from, one per line:\n@someaccount\nhttps://www.youtube.com/@channel\nhttps://www.tiktok.com/@user'} style={{ ...st.input, resize: 'vertical' }} />
+      <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+        <select value={plat} onChange={e => setPlat(e.target.value)} style={st.select} aria-label="Platform for plain @names">
+          <option value="instagram">@names = Instagram</option>
+          <option value="youtube">@names = YouTube</option>
+          <option value="tiktok">@names = TikTok</option>
+        </select>
+        <button type="button" onClick={add} disabled={working || !text.trim()} className="shine" style={st.primary}>Add sources</button>
+      </div>
+      {err && <div style={{ ...st.error, marginTop: 8 }}>{err}</div>}
+      {msg && <div style={{ fontSize: 12, color: '#7bd88f', marginTop: 8 }}>{msg}</div>}
+
+      {list.map(s => (
+        <div key={s.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '8px 0', borderTop: '1px solid #181818', marginTop: 8 }}>
+          <span style={{ ...st.chip, background: '#1a1a1a', color: '#a79dff' }}>{PLAT[s.platform] || s.platform}</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13, color: '#ddd', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.platform === 'youtube' ? s.handle : '@' + s.handle}</div>
+            <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>{ago(s.last_scan_at)}{s.last_scan_at ? ` · ${s.last_found} seen · ${s.added_total} queued in total` : ''}</div>
+            {s.last_error && <div style={{ fontSize: 11, color: '#c97', marginTop: 2 }}>{String(s.last_error).slice(0, 140)}</div>}
+          </div>
+          <button type="button" aria-label="Remove source" onClick={() => act(() => api.autopilotRemoveSource(s.id))} style={st.mini}>✕</button>
+        </div>
+      ))}
+
+      {list.length > 0 && (
+        <button type="button" onClick={() => act(() => api.autopilotScanSources(page.id), r => r.busy ? 'Already scanning another page, try again in a minute.' : 'Scanning…')}
+          disabled={working || busy} style={{ ...st.ghost, width: '100%', marginTop: 10 }}>{busy ? 'Scanning…' : 'Scan now'}</button>
+      )}
+      <div style={{ fontSize: 11, color: '#555', marginTop: 8 }}>
+        With Autopilot on, the server checks every 30 min and keeps about 20 videos queued, newest first, taking turns between sources. A video is never queued twice, even if you delete it from the queue. Only public accounts work. Instagram sources are scanned less often, using a separate scan account.
+      </div>
     </div>
   );
 }

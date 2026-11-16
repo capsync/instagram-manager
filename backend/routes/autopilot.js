@@ -4,6 +4,10 @@ const { getDB } = require('../models/db');
 const { createStore } = require('../services/autopilotStore');
 const { getAutopilot, computeSlots, dueIndex, normalizeUrl, safeTz, SLOT_EXPIRY_MS } = require('../services/autopilot');
 
+const { createSourceStore } = require('../services/sourceStore');
+const { parseAccount } = require('../services/linkFinder');
+const { refill, isBusy } = require('../services/sourceFiller');
+
 const router = express.Router();
 const store = () => createStore(getDB());
 const MAX_QUEUED = 200;
@@ -180,6 +184,62 @@ router.post('/:accountId/resume', async (req, res, next) => {
     const page = await ownedPage(req, res); if (!page) return;
     await store().resetFail(page.id);
     res.json(await pageSummary(store(), await store().getAccount(page.id)));
+  } catch (err) { next(err); }
+});
+
+// ── Source accounts: public Instagram / YouTube / TikTok accounts whose new videos are queued automatically ──
+const MAX_SOURCES = 20;
+const sourceStore = () => createSourceStore(getDB());
+
+router.get('/:accountId/sources', async (req, res, next) => {
+  try {
+    const page = await ownedPage(req, res); if (!page) return;
+    res.json({ busy: isBusy(), sources: await sourceStore().list(page.id) });
+  } catch (err) { next(err); }
+});
+
+// Body: { sources: "one per line (or array)", platform: "instagram|youtube|tiktok" (for bare @names) }
+router.post('/:accountId/sources', async (req, res, next) => {
+  try {
+    const page = await ownedPage(req, res); if (!page) return;
+    const b = req.body || {};
+    const raw = (Array.isArray(b.sources) ? b.sources : String(b.sources || '').split(/[\s,]+/)).map(x => String(x).trim()).filter(Boolean);
+    if (!raw.length) return res.status(400).json({ error: 'Paste at least one account or profile link.' });
+    const platform = ['instagram', 'youtube', 'tiktok'].includes(b.platform) ? b.platform : 'instagram';
+    const ss = sourceStore();
+    let count = await ss.count(page.id);
+    const out = { added: 0, duplicates: 0, invalid: [], limit: false };
+    for (const r0 of raw) {
+      const a = parseAccount(r0, platform);
+      if (!a) { out.invalid.push(r0.slice(0, 60)); continue; }
+      if (count >= MAX_SOURCES) { out.limit = true; break; }
+      const r = await ss.add(page.id, a);
+      if (r.duplicate) out.duplicates++; else { out.added++; count++; }
+    }
+    if (out.added) refill(page.id, { force: true }).catch(() => {});   // first pull starts right away, in the background
+    res.json(out);
+  } catch (err) { next(err); }
+});
+
+// Scan now (in the background) and top up the queue
+router.post('/:accountId/sources/scan', async (req, res, next) => {
+  try {
+    const page = await ownedPage(req, res); if (!page) return;
+    if (isBusy()) return res.json({ started: false, busy: true });
+    refill(page.id, { force: true }).catch(() => {});
+    res.json({ started: true });
+  } catch (err) { next(err); }
+});
+
+router.delete('/source/:sourceId', async (req, res, next) => {
+  try {
+    const ss = sourceStore();
+    const src = await ss.get(req.params.sourceId);
+    if (!src) return res.status(404).json({ error: 'Source not found.' });
+    const page = await store().getAccount(src.account_id);
+    if (page?.user_id && page.user_id !== req.headers['x-user-id']) return res.status(403).json({ error: 'Not your page.' });
+    await ss.remove(src.id);
+    res.json({ message: 'Removed' });
   } catch (err) { next(err); }
 });
 

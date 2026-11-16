@@ -290,6 +290,7 @@ function startAutopilot() {
   cron.schedule('*/10 * * * *', run);
   setTimeout(run, 60 * 1000);
   logger.info('Autopilot ready (checks every 10 minutes)');
+  try { require('./sourceFiller').startSourceFiller(); } catch (e) { logger.warn('Source auto-fill not started: ' + e.message); }
 }
 
 module.exports = { createAutopilot, getAutopilot, startAutopilot, computeSlots, dueIndex, normalizeUrl, mergeOptions, verifyRules, fullFrame, safeTz, localToUtc, localYMD, SLOT_EXPIRY_MS, MAX_ATTEMPTS, FAIL_PAUSE_AT };

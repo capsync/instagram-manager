@@ -132,6 +132,10 @@ export const api = {
   autopilotRetry:    (itemId) => request('POST', `/autopilot/item/${itemId}/retry`),
   autopilotRun:      (id) => request('POST', `/autopilot/${id}/run`),
   autopilotResume:   (id) => request('POST', `/autopilot/${id}/resume`),
+  autopilotSources:      (id) => request('GET', `/autopilot/${id}/sources`),
+  autopilotAddSources:   (id, sources, platform) => request('POST', `/autopilot/${id}/sources`, { sources, platform }),
+  autopilotScanSources:  (id) => request('POST', `/autopilot/${id}/sources/scan`),
+  autopilotRemoveSource: (sourceId) => request('DELETE', `/autopilot/source/${sourceId}`),
   cardPreview:   (account_id, text, scale, mode, theme) => request('POST', '/content/card-preview', { account_id, text, scale, mode, theme }),
   // Posts
   getPosts: (params = {}) => {
