@@ -152,7 +152,7 @@ async function processVideo(videoPath, videoUrl, accountId, meta = {}, options =
   // Reposts: find the source credit, and run the safety check while the caption is being written
   const isRepost = !!videoUrl;
   const credit = isRepost ? extractCredit(meta, videoUrl) : null;
-  const guardP = assessClip({ videoPath, meta, url: videoUrl || '', isRepost, credit });
+  const guardP = assessClip({ videoPath, meta, url: videoUrl || '', isRepost, credit, transcript });
 
   const { caption, onScreenText } = await generateContent({
     videoPath,
