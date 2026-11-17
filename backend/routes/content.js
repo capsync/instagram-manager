@@ -46,6 +46,7 @@ function cleanMetaText(t = '') {
 // on a free server and on phones. With the header `x-async: 1` the route answers at once with a jobId and the
 // work continues in the background; poll GET /api/content/job/:id. Without the header it behaves as before.
 // Heavy jobs run one after another so two devices don't starve each other (and the server doesn't run out of memory).
+const killSwitch = require('../services/killSwitch');
 const jobs = new Map();   // id -> { status: queued|running|done|error, queuedAt, startedAt, finishedAt, code, body }
 setInterval(() => {
   const cutoff = Date.now() - 30 * 60 * 1000;
@@ -79,7 +80,10 @@ function heavy(handler, opts = {}) {
   return (req, res, next) => {
     const w = opts.remote && req.body && req.body.brandCard && req.body.brandCard.enabled ? remoteRender.reserve() : null;
     req.renderWorker = w;
-    const runHeavy = w ? (fn) => fn().finally(() => remoteRender.release(w)) : (fn) => lane.run(fn);
+    const uid = req.headers['x-user-id'] || null;
+    // a job that was waiting in line when STOP ALL was pressed never starts; running ones are killed by the switch
+    const guarded = (fn) => () => killSwitch.runAs(uid, () => { killSwitch.check(uid); return fn(); });
+    const runHeavy = w ? (fn) => guarded(fn)().finally(() => remoteRender.release(w)) : (fn) => lane.run(guarded(fn));
     if (req.headers['x-async'] !== '1') return runHeavy(() => handler(req, res, next)).catch(next);
     const id = uuidv4();
     const job = { status: 'queued', queuedAt: Date.now(), userId: req.headers['x-user-id'] || null };
