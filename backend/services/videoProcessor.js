@@ -13,8 +13,8 @@ function getUploadDir() {
 
 // Run heavy ffmpeg work at low CPU priority (when `nice` exists) so the web app stays responsive while rendering.
 const NICE = fs.existsSync('/usr/bin/nice') ? '/usr/bin/nice' : null;
-// x264 speed for 'best' renders. 'faster' = sharper than 'veryfast' at the same size, but slower. If renders time out on a weak server, set RENDER_PRESET=veryfast.
-const BEST_PRESET = ['ultrafast','superfast','veryfast','faster','fast','medium'].includes(process.env.RENDER_PRESET) ? process.env.RENDER_PRESET : 'faster';
+// x264 speed for 'best' renders. Keep 'veryfast' on a 512MB server: slower presets use more memory and crashed it. Set RENDER_PRESET=faster only on a bigger instance.
+const BEST_PRESET = ['ultrafast','superfast','veryfast','faster','fast','medium'].includes(process.env.RENDER_PRESET) ? process.env.RENDER_PRESET : 'veryfast';
 const FFMPEG_TIMEOUT_MS = Number(process.env.FFMPEG_TIMEOUT_MS) || 15 * 60 * 1000;   // slow CPUs need more than 5 minutes
 
 function runFFmpeg(args, label) {
@@ -677,7 +677,7 @@ async function enhanceVideo({ inputPath, srtContent, segments, textOverlays = []
   args.push('-threads', THREADS);
   args.push('-profile:v', 'high', '-level:v', '4.1');
   args.push('-pix_fmt', 'yuv420p');
-  if (layout) args.push(...(layoutQuality === 'best' ? ['-x264-params', 'rc-lookahead=20:ref=3'] : ['-tune', 'fastdecode', '-x264-params', 'rc-lookahead=0:bframes=0:ref=1:subme=1']));
+  if (layout) args.push(...(layoutQuality === 'best' ? ['-x264-params', 'rc-lookahead=10:ref=2'] : ['-tune', 'fastdecode', '-x264-params', 'rc-lookahead=0:bframes=0:ref=1:subme=1']));
   args.push('-maxrate', layout && layoutQuality === 'best' ? '20M' : '12M', '-bufsize', layout && layoutQuality === 'best' ? '40M' : '24M');
   args.push('-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709');
   args.push('-c:a', 'aac', '-b:a', '160k', '-ar', '48000', '-movflags', '+faststart', outputPath);
@@ -723,7 +723,6 @@ async function renderFramed({ inputPath, frame, trim, quality = 'best', card }) 
     args.push('-vf', `${chain},format=yuv420p`);
   }
   args.push('-c:v', 'libx264', '-preset', best ? BEST_PRESET : 'ultrafast', '-crf', best ? '16' : '21',
-    ...(best ? ['-x264-params', 'rc-lookahead=20:ref=3'] : []),
     '-threads', THREADS, '-profile:v', 'high', '-level:v', '4.1', '-pix_fmt', 'yuv420p',
     '-maxrate', best ? '20M' : '10M', '-bufsize', best ? '40M' : '20M',
     '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709',
