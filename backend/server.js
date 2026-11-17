@@ -1,4 +1,5 @@
 require('dotenv').config();
+const killSwitch = require('./services/killSwitch');   // must load before any other file that runs ffmpeg / yt-dlp
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
@@ -10,6 +11,7 @@ const contentRoutes = require('./routes/content');
 const postRoutes = require('./routes/posts');
 const autopilotRoutes = require('./routes/autopilot');
 const authRoutes = require('./routes/auth');
+const killRoutes = require('./routes/killswitch');
 const { errorHandler } = require('./middleware/errorHandler');
 const { attachUser } = require('./middleware/auth');
 const { startScheduler } = require('./services/scheduler');
@@ -34,6 +36,8 @@ app.use(express.urlencoded({ extended: true }));
 app.use('/uploads', express.static(uploadDir));
 
 app.use('/api', attachUser);   // verifies the login token; sets the real user id for every /api route
+app.use('/api', killSwitch.middleware);   // tags each request with its user and refuses new heavy work after STOP ALL
+app.use('/api/kill', killRoutes);
 app.use('/api/accounts', accountRoutes);
 app.use('/api/content', contentRoutes);
 app.use('/api/posts', postRoutes);
