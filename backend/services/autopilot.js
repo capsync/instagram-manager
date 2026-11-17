@@ -9,6 +9,7 @@
 //  - a page that fails 3 times in a row is paused instead of retrying forever
 const crypto = require('crypto');
 const logger = require('./logger');
+const killSwitch = require('./killSwitch');
 
 const MAX_ATTEMPTS = 2;                 // tries per queued item
 const FAIL_PAUSE_AT = 3;                // failed items in a row before the page is paused
@@ -179,18 +180,24 @@ function createAutopilot({ store, call, now = () => new Date(), sleep = (ms) => 
       caption = r.generatedCaption; hook = r.hookText;
     }
 
-    // 3. render the layout (card on top, video below)
+    // 3. the on-screen text must exist for every layout that shows it. Rewrite up to twice, then refuse to post.
     let mode = opts.layout;
-    if (mode === 'card' && !String(hook || '').trim()) mode = 'text';   // no text for the card → crop only
-    if (mode === 'cinema' && !String(hook || '').trim()) mode = 'clean';   // no text for the cinema line → plain video
+    for (let i = 0; mode !== 'clean' && !String(hook || '').trim(); i++) {
+      if (i >= 2) throw new Error('No on-screen text was written for this post, so it was not posted.');
+      const r = await call('POST', `/api/content/regenerate/${proc.postId}`, { account_id: page.id, ...reqOpts }, userId, 8 * 60 * 1000);
+      caption = r.generatedCaption; hook = r.hookText;
+    }
+
+    // 4. render the layout (card on top, video below)
     await call('POST', `/api/content/enhance/${proc.postId}`,
       { account_id: page.id, brandCard: { enabled: true, mode, text: hook || '', frame: fullFrame(proc.autoCrop), theme: opts.theme, quality: opts.quality || process.env.AUTOPILOT_QUALITY || 'best' } }, userId, 30 * 60 * 1000);
 
-    // 4. publish, then wait for the result
+    // 5. publish, then wait for the result
     await call('POST', `/api/posts/${proc.postId}/publish`, { account_id: page.id, caption, hookText: hook }, userId, 60 * 1000);
     const deadline = now().getTime() + PUBLISH_WAIT_MS;
     for (;;) {
       await sleep(pollMs);
+      killSwitch.check(page.user_id);
       const p = await store.getPost(proc.postId);
       if (p?.status === 'posted') { await store.removeFiles(p); return { postId: proc.postId }; }
       if (p?.status === 'failed') throw new Error(p.error_message || 'Publishing failed');
@@ -206,6 +213,11 @@ function createAutopilot({ store, call, now = () => new Date(), sleep = (ms) => 
       logger.info(`Autopilot posted ${item.url} to ${page.username || page.id}`);
     } catch (err) {
       const msg = String(err.message || err).slice(0, 500);
+      if (err.stopped || killSwitch.isStopped(page.user_id)) {   // STOP ALL: not an error, no retry, doesn't pause the page
+        await store.markFailed(item.id, 'Stopped by you', now().toISOString());
+        logger.warn(`Autopilot stopped ${item.url}`);
+        return;
+      }
       if (err.hold) {   // held clips are not errors: no retry, and they don't count toward pausing the page
         await store.markFailed(item.id, msg, now().toISOString());
         logger.warn(`Autopilot held ${item.url}: ${msg}`);
@@ -230,6 +242,7 @@ function createAutopilot({ store, call, now = () => new Date(), sleep = (ms) => 
     const pages = await store.listPages(accountId, { enabledOnly: !force });
     for (const page of pages) {
       if (activePages.has(page.id)) continue;
+      if (killSwitch.isStopped(page.user_id)) continue;   // STOP ALL pressed
       if (page.ap_paused_reason && !force) continue;
       if (!force) {
         const { slots, dayStart } = computeSlots(page, t);
