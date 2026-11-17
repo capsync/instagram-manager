@@ -2,6 +2,7 @@ import React, { useState, useEffect, lazy, Suspense } from 'react';
 import NewPost from './components/NewPost';
 import QuickPost from './components/QuickPost';
 import Dashboard from './components/Dashboard';
+import { api } from './services/api';
 
 // Only the Create tab loads up front. The other tabs load in the background while you work,
 // so switching to them is instant instead of waiting for a download.
@@ -86,6 +87,35 @@ export default function App() {
   const [showMenu, setShowMenu] = useState(false);
   const [checking, setChecking] = useState(true);
   const [expired, setExpired] = useState(false);
+  const [stopped, setStopped] = useState(false);
+  const [stopBusy, setStopBusy] = useState(false);
+  const [stopMsg, setStopMsg] = useState('');
+
+  // Is everything currently stopped? (also picks it up if it was stopped from another device)
+  useEffect(() => {
+    let alive = true;
+    const poll = () => api.stopStatus().then(r => { if (alive) setStopped(!!r.stopped); }).catch(() => {});
+    poll();
+    const t = setInterval(poll, 20000);
+    return () => { alive = false; clearInterval(t); };
+  }, []);
+
+  const handleStopAll = async () => {
+    if (!window.confirm('STOP EVERYTHING?\n\nThis cancels downloads and renders that are running, pauses Autopilot on all your pages and cancels scheduled posts. Nothing starts again until you press Resume.')) return;
+    setStopBusy(true); setStopMsg('');
+    try {
+      const r = await api.stopAll();
+      setStopped(true);
+      setStopMsg(`Stopped. ${r.killed || 0} running process(es) killed, ${r.queueStopped || 0} queue item(s) stopped, ${r.scheduledCancelled || 0} scheduled post(s) cancelled.`);
+    } catch (e) { setStopMsg('Could not stop: ' + (e.message || 'try again')); }
+    finally { setStopBusy(false); }
+  };
+  const handleResume = async () => {
+    setStopBusy(true);
+    try { await api.resumeAll(); setStopped(false); setStopMsg(''); }
+    catch (e) { setStopMsg('Could not resume: ' + (e.message || 'try again')); }
+    finally { setStopBusy(false); }
+  };
 
   useEffect(() => {
     const on = () => setExpired(true);
@@ -206,6 +236,14 @@ export default function App() {
           <span style={s.logoText}>InstaManager</span>
         </div>
 
+        {/* STOP ALL */}
+        <button onClick={stopped ? handleResume : handleStopAll} disabled={stopBusy}
+          title={stopped ? 'Everything is stopped. Tap to resume.' : 'Stop everything running on the server'}
+          style={{ marginLeft: 'auto', marginRight: 10, minHeight: 40, padding: '0 14px', borderRadius: 999, border: 'none', cursor: 'pointer', fontWeight: 800, fontSize: 13, letterSpacing: '0.04em', color: '#fff',
+            background: stopped ? 'linear-gradient(135deg,#16a34a,#15803d)' : 'linear-gradient(135deg,#ef4444,#b91c1c)', boxShadow: stopped ? '0 6px 18px -6px rgba(22,163,74,.8)' : '0 6px 18px -6px rgba(239,68,68,.9)', opacity: stopBusy ? 0.6 : 1 }}>
+          {stopBusy ? '…' : stopped ? '▶ RESUME' : '■ STOP ALL'}
+        </button>
+
         {/* User menu */}
         <div style={{ position: 'relative' }}>
           <button onClick={() => setShowMenu(!showMenu)} style={s.avatarBtn} title={user?.name}>
@@ -231,6 +269,12 @@ export default function App() {
           )}
         </div>
       </header>
+
+      {(stopped || stopMsg) && (
+        <div role="status" style={{ margin: '10px 12px 0', padding: '10px 14px', borderRadius: 14, fontSize: 14, color: '#fff', background: stopped ? '#7f1d1d' : '#1f2937', border: '1px solid rgba(255,255,255,0.12)' }}>
+          {stopped ? <b>Everything is stopped. </b> : null}{stopMsg || 'No downloads, renders, Autopilot posts or publishing will run until you press Resume.'}
+        </div>
+      )}
 
       {/* Overlay to close menu */}
       {showMenu && <div onClick={() => setShowMenu(false)} style={s.overlay} />}
