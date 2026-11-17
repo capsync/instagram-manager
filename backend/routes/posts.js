@@ -166,6 +166,11 @@ router.post('/:id/publish', async (req, res, next) => {
     activePostPublishes.add(post.id);
     res.json({ message: 'Publishing to Instagram...', status: 'publishing' });
 
+    if (require('../services/killSwitch').isStopped(req.headers['x-user-id'])) {
+      await db.run(`UPDATE posts SET status='failed', error_message='Stopped by you' WHERE id=$1`, [post.id]);
+      activePostPublishes.delete(post.id);
+      return;
+    }
     const publishPromise = usesGraphApi
       ? postReel(post.ig_user_id, post.access_token, videoUrl, finalCaption, {
           postId: post.id, accountId: accountKey,
