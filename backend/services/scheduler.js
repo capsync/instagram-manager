@@ -6,6 +6,7 @@ const { postReel, getPermalink } = require('./instagramPoster');
 const { postReelWithBrowser } = require('./instagramWebPoster');
 const logger = require('./logger');
 const { gateDecision } = require('./contentGuard');
+const killSwitch = require('./killSwitch');
 
 const activePostJobs = new Set();
 const activeAccountJobs = new Set();
@@ -44,7 +45,7 @@ cron.schedule('*/10 * * * *', async () => {
     logger.info(`Scheduler tick at ${now}`);
 
     const duePosts = await db.all(
-      `SELECT p.*, a.id as account_ref, a.name as account_name, a.username, a.ig_user_id, a.access_token,
+      `SELECT p.*, a.user_id as account_user_id, a.id as account_ref, a.name as account_name, a.username, a.ig_user_id, a.access_token,
               a.fallback_username, a.fallback_session_path
        FROM posts p JOIN accounts a ON p.account_id = a.id
        WHERE p.status = 'scheduled' AND p.scheduled_at <= $1`,
@@ -55,6 +56,7 @@ cron.schedule('*/10 * * * *', async () => {
 
     for (const post of duePosts) {
       const accountKey = post.account_id || post.account_ref || 'no-account';
+      if (killSwitch.isStopped(post.account_user_id)) continue;   // STOP ALL pressed: leave it alone
 
       if (activePostJobs.has(post.id)) {
         logger.warn(`Skipping post ${post.id} because it is already in flight`, { accountId: accountKey });
