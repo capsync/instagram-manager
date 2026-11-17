@@ -89,19 +89,21 @@ SOUND HUMAN
 • Don't manufacture awe. Have an opinion only when the clip supports one.
 • NEVER use these AI and content-farm tells: "not just X, it's Y" or "more than just"; "here's the thing"; "let that sink in"; "and honestly?"; "this is what X looks like"; "a masterclass in"; "a testament to"; "a reminder that"; "reminding us"; "the perfect blend"; "proof that"; "whether you're X or Y"; "dive into"; "delve"; "tapestry"; "unforgettable"; "timeless"; "iconic" or "legendary" (unless it is literally the established word for the thing); "chills"; "goosebumps"; "pure magic"; "raw emotion"; "you won't believe"; "wait for it"; "we need to talk about"; "tell me you..."; starting a line with "the way...". No tidy moral or summary sentence at the end. No stacked triples of adjectives. Avoid em dashes (use commas or full stops). No all caps, no hype words.
 
-RANGE REFERENCE (these are different imaginary clips, shown only to illustrate how much length, tone and depth should vary with the content; NEVER reuse their wording, structure or facts):
+RANGE REFERENCE (each example below is a complete, correctly formatted output: first line is the on-screen text, then a blank line, then the caption. These are different imaginary clips, shown only to illustrate how much length, tone and depth should vary with the content; NEVER reuse their wording, structure or facts):
 
 Meme clip, a dog watching someone eat:
-TOS: he's been waiting for this exact bite since the fridge opened 😭
-Caption: Eight seconds of eye contact and he never blinks once. Nobody in that house is finishing that sandwich in peace.
+he's been waiting for this exact bite since the fridge opened 😭
+
+Eight seconds of eye contact and he never blinks once. Nobody in that house is finishing that sandwich in peace.
 
 Concert clip, crowd singing:
-TOS: he took his hand off the strings and let 50,000 people finish the verse 🎸
-Caption: Halfway through the second verse he stops playing and lets the crowd carry it. It gets louder as it goes, and he doesn't come back in until the chorus, grinning at the front rows.
+he took his hand off the strings and let 50,000 people finish the verse 🎸
+
+Halfway through the second verse he stops playing and lets the crowd carry it. It gets louder as it goes, and he doesn't come back in until the chorus, grinning at the front rows.
 
 Clip with a lot of real story behind it:
-TOS: Ariana sang the guitar solo too 🎤
-Caption:
+Ariana sang the guitar solo too 🎤
+
 Released on March 20, 2016, the acappella version of "Dangerous Woman" stripped away the instrumental and put her vocals front and center. Wearing the black latex bunny mask associated with the album, Ariana performed against a simple backdrop, moving from the softer verses into the soaring chorus. She even sang her way through the guitar-solo section.
 
 The song became the lead single and title track of her third studio album. It debuted at No. 10 on the Billboard Hot 100 and later peaked at No. 8. Its debut also made Ariana the first artist to launch the lead single from each of her first three albums directly into the chart's top 10.
@@ -135,7 +137,7 @@ function buildSystemPrompt({ creditLine, aiHashtags }) {
   }
   parts.push('Never mention who posted the clip, which account or page it came from, or that it went viral elsewhere.\n\n');
   parts.push(PROMPT_MENTIONS, PROMPT_OPTIONS, '\n\n');
-  parts.push('OUTPUT FORMAT — return exactly this, with one blank line between blocks. No labels, no headings, no bullet points, no notes, no explanations, no alternative versions:\n\n[TOS line]\n\n[Caption: as many paragraphs as the content needs, separated by blank lines]');
+  parts.push('OUTPUT FORMAT — return exactly this, with one blank line between blocks. Never write the words TOS, CAPTION or any label. No headings, no bullet points, no notes, no explanations, no alternative versions:\n\n[TOS line]\n\n[Caption: as many paragraphs as the content needs, separated by blank lines]');
   if (aiHashtags) parts.push('\n\n[#hashtags on one line]');
   return parts.join('');
 }
@@ -304,15 +306,46 @@ function normalizeCaption(caption, allowed, o) {
   return parts.filter(Boolean).join('\n\n');
 }
 
+// Splits the model's answer into [tosBlock, ...captionParagraphs]. Handles answers with or without
+// "TOS:" / "CAPTION:" labels, so the on-screen text can never end up inside the caption (or vice versa).
+function splitOutput(raw) {
+  const text = String(raw || '').replace(/\r/g, '').trim();
+  const LABEL = /^[\s*_#>`"']*(TOS|TEXT[- ]?ON[- ]?SCREEN|ON[- ]?SCREEN TEXT|HOOK|CAPTION|HASHTAGS?)[\s*_`"']*:[\s*_`"']*(.*)$/i;
+  const LABEL_ONLY = /^[\s*_#>`"']*(TOS|TEXT[- ]?ON[- ]?SCREEN|ON[- ]?SCREEN TEXT|HOOK|CAPTION|HASHTAGS?)[\s*_`"']*$/i;
+  const kind = (w) => /^caption$/i.test(w) ? 'caption' : /^hashtag/i.test(w) ? 'tags' : 'tos';
+  const secs = [];
+  let cur = null;
+  for (const line of text.split('\n')) {
+    const m = line.match(LABEL) || line.match(LABEL_ONLY);
+    if (m) { cur = { kind: kind(m[1]), text: (m[2] || '').trim() }; secs.push(cur); continue; }
+    if (!cur) { cur = { kind: null, text: line }; secs.push(cur); continue; }
+    cur.text += '\n' + line;
+  }
+  const labeled = secs.some(x => x.kind === 'tos') || secs.some(x => x.kind === 'caption');
+  const paras = (t) => String(t || '').trim().split(/\n\s*\n/).map(x => x.trim()).filter(Boolean);
+  if (labeled) {
+    const tosParas = paras(secs.filter(x => x.kind === 'tos').map(x => x.text).join('\n\n'));
+    const capParas = paras(secs.filter(x => x.kind === 'caption' || x.kind === null).map(x => x.text).join('\n\n'));
+    const tagParas = paras(secs.filter(x => x.kind === 'tags').map(x => x.text).join('\n\n'));
+    let tos = tosParas[0] || '';
+    let cap = capParas;
+    if (!tos && cap.length) { tos = cap[0]; cap = cap.slice(1); }          // label missing on the TOS: first block is it
+    if (tosParas.length > 1) cap = [...tosParas.slice(1), ...cap];
+    return [tos.split('\n')[0].trim() ? tos : '', ...cap, ...tagParas].filter((x, i) => i === 0 || x);
+  }
+  // No labels at all: first line / block is the TOS, the rest is the caption
+  let blocks = text.split(/\n\s*\n/);
+  if (blocks[0] && blocks[0].includes('\n')) {
+    const i = blocks[0].indexOf('\n');
+    blocks = [blocks[0].slice(0, i), blocks[0].slice(i + 1).trim(), ...blocks.slice(1)].filter(Boolean);
+  }
+  return blocks;
+}
+
 function parseResponse(raw, allowed, o) {
   try {
     const required = new Set(o.mentions.map(h => h.toLowerCase()));
-    let blocks = raw.trim().split(/\n\s*\n/);
-    // If the model glued the TOS line and the caption together without a blank line, split after the first line
-    if (blocks[0] && blocks[0].includes('\n')) {
-      const i = blocks[0].indexOf('\n');
-      blocks = [blocks[0].slice(0, i), blocks[0].slice(i + 1).trim(), ...blocks.slice(1)].filter(Boolean);
-    }
+    const blocks = splitOutput(raw);
     // Protect must-include TOS phrases from the cleanup steps, then restore them exactly
     const tmasks = o.tosMustInclude.map((phrase, i) => ({
       phrase, token: `⟦T${i}⟧`, re: new RegExp(escapeRe(phrase).replace(/\s+/g, '\\s+'), 'i')
