@@ -100,6 +100,10 @@ async function requestJob(method, path, data, isForm, onStatus) {
 }
 
 export const api = {
+  // STOP ALL (kill switch)
+  stopAll:    () => request('POST', '/kill/stop'),
+  resumeAll:  () => request('POST', '/kill/resume'),
+  stopStatus: () => request('GET',  '/kill/status'),
   // Accounts
   getAccounts:   ()         => request('GET',    '/accounts'),
   addAccount:    (data)     => request('POST',   '/accounts', data),
