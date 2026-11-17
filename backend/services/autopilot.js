@@ -190,7 +190,7 @@ function createAutopilot({ store, call, now = () => new Date(), sleep = (ms) => 
 
     // 4. render the layout (card on top, video below)
     await call('POST', `/api/content/enhance/${proc.postId}`,
-      { account_id: page.id, brandCard: { enabled: true, mode, text: hook || '', frame: fullFrame(proc.autoCrop), theme: opts.theme, quality: opts.quality || process.env.AUTOPILOT_QUALITY || 'best' } }, userId, 30 * 60 * 1000);
+      { account_id: page.id, brandCard: { enabled: true, mode, text: hook || '', frame: fullFrame(proc.autoCrop), theme: opts.theme, quality: opts.quality || 'best' } }, userId, 30 * 60 * 1000);
 
     // 5. publish, then wait for the result
     await call('POST', `/api/posts/${proc.postId}/publish`, { account_id: page.id, caption, hookText: hook }, userId, 60 * 1000);
