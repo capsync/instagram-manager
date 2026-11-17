@@ -84,7 +84,7 @@ export default function NewPost() {
   const [autoFrame, setAutoFrame]         = useState(null);
   const [showAdv, setShowAdv]             = useState(false);
   const [jobInfo, setJobInfo]             = useState(null);
-  const [quality, setQualityState]        = useState(() => { try { return localStorage.getItem('im_quality') === 'best' ? 'best' : 'fast'; } catch { return 'fast'; } });
+  const [quality, setQualityState]        = useState(() => { try { return localStorage.getItem('im_quality') === 'fast' ? 'fast' : 'best'; } catch { return 'best'; } });
   const setQuality = (v) => { setQualityState(v); try { localStorage.setItem('im_quality', v); } catch { /* ignore */ } };
   const fileRef = useRef();
   const PUBLISH_STATUS_POLL_MS = 3000;
