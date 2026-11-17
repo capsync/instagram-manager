@@ -13,6 +13,8 @@ function getUploadDir() {
 
 // Run heavy ffmpeg work at low CPU priority (when `nice` exists) so the web app stays responsive while rendering.
 const NICE = fs.existsSync('/usr/bin/nice') ? '/usr/bin/nice' : null;
+// x264 speed for 'best' renders. 'faster' = sharper than 'veryfast' at the same size, but slower. If renders time out on a weak server, set RENDER_PRESET=veryfast.
+const BEST_PRESET = ['ultrafast','superfast','veryfast','faster','fast','medium'].includes(process.env.RENDER_PRESET) ? process.env.RENDER_PRESET : 'faster';
 const FFMPEG_TIMEOUT_MS = Number(process.env.FFMPEG_TIMEOUT_MS) || 15 * 60 * 1000;   // slow CPUs need more than 5 minutes
 
 function runFFmpeg(args, label) {
@@ -656,7 +658,7 @@ async function enhanceVideo({ inputPath, srtContent, segments, textOverlays = []
     );
   }
 
-  const crf = preset?.crf || (layout ? (layoutQuality === 'best' ? '17' : '22') : enhance ? '18' : '23');
+  const crf = preset?.crf || (layout ? (layoutQuality === 'best' ? '16' : '22') : enhance ? '18' : '23');
   const args = [...inputArgs];
   if (layout) {
     args.push(
@@ -670,13 +672,13 @@ async function enhanceVideo({ inputPath, srtContent, segments, textOverlays = []
 
   // Quality encode (High profile, 48kHz audio) - still single-thread for Render free tier
   args.push('-c:v', 'libx264');
-  args.push('-preset', layout ? (layoutQuality === 'best' ? 'veryfast' : 'ultrafast') : 'veryfast');
+  args.push('-preset', layout ? (layoutQuality === 'best' ? BEST_PRESET : 'ultrafast') : 'veryfast');
   args.push('-crf', crf);
   args.push('-threads', THREADS);
   args.push('-profile:v', 'high', '-level:v', '4.1');
   args.push('-pix_fmt', 'yuv420p');
-  if (layout) args.push(...(layoutQuality === 'best' ? ['-x264-params', 'rc-lookahead=10:ref=2'] : ['-tune', 'fastdecode', '-x264-params', 'rc-lookahead=0:bframes=0:ref=1:subme=1']));
-  args.push('-maxrate', layout && layoutQuality === 'best' ? '16M' : '12M', '-bufsize', layout && layoutQuality === 'best' ? '32M' : '24M');
+  if (layout) args.push(...(layoutQuality === 'best' ? ['-x264-params', 'rc-lookahead=20:ref=3'] : ['-tune', 'fastdecode', '-x264-params', 'rc-lookahead=0:bframes=0:ref=1:subme=1']));
+  args.push('-maxrate', layout && layoutQuality === 'best' ? '20M' : '12M', '-bufsize', layout && layoutQuality === 'best' ? '40M' : '24M');
   args.push('-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709');
   args.push('-c:a', 'aac', '-b:a', '160k', '-ar', '48000', '-movflags', '+faststart', outputPath);
 
@@ -720,9 +722,10 @@ async function renderFramed({ inputPath, frame, trim, quality = 'best', card }) 
   } else {
     args.push('-vf', `${chain},format=yuv420p`);
   }
-  args.push('-c:v', 'libx264', '-preset', best ? 'veryfast' : 'ultrafast', '-crf', best ? '17' : '21',
+  args.push('-c:v', 'libx264', '-preset', best ? BEST_PRESET : 'ultrafast', '-crf', best ? '16' : '21',
+    ...(best ? ['-x264-params', 'rc-lookahead=20:ref=3'] : []),
     '-threads', THREADS, '-profile:v', 'high', '-level:v', '4.1', '-pix_fmt', 'yuv420p',
-    '-maxrate', best ? '16M' : '10M', '-bufsize', best ? '32M' : '20M',
+    '-maxrate', best ? '20M' : '10M', '-bufsize', best ? '40M' : '20M',
     '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709',
     '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-movflags', '+faststart', outputPath);
   await runFFmpeg(args, 'framed');
