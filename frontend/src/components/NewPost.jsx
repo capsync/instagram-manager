@@ -39,7 +39,8 @@ function getBoxTextColor(box) {
 // Main component ────────────────────────────────────────────────────────────
 const FULL_FRAME = { top: 0, bottom: 1, left: 0, right: 1, zoom: 1, offsetY: 0, cardScale: 1 };
 
-export default function NewPost() {
+// downloadOnly = the Export tab: same upload, caption and render settings, but nothing is posted. You download the video + caption.
+export default function NewPost({ downloadOnly = false } = {}) {
   const [accounts, setAccounts]         = useState([]);
   const [accountId, setAccountId]       = useState('');
   const [url, setUrl]                   = useState('');
@@ -66,6 +67,8 @@ export default function NewPost() {
   const [scheduling, setScheduling]     = useState(false);
   const [scheduleTime, setScheduleTime] = useState('');
   const [posting, setPosting]           = useState(false);
+  const [exporting, setExporting]         = useState(false);
+  const [exported, setExported]           = useState(null);   // { url } once the processed video is ready to download
   const [error, setError]               = useState('');
   const [success, setSuccess]           = useState('');
   const [popup, setPopup]               = useState(null);
@@ -103,7 +106,7 @@ export default function NewPost() {
     setBrightness(0); setContrast(1); setSaturation(1); setSpeed(1);
     setCropRatio('none');
     setScheduling(false); setScheduleTime('');
-    setError(''); setSuccess(''); setUrl(''); setFile(null); setCapOpts({});
+    setError(''); setSuccess(''); setUrl(''); setFile(null); setCapOpts({}); setExported(null);
   }
 
   // One tap: read the copied link from the clipboard, fill the box, and start processing.
@@ -198,6 +201,73 @@ export default function NewPost() {
     } finally {
       setEnhancing(false);
     }
+  }
+
+  // ── Export tab: render with the current settings, then download (nothing is posted) ──
+  async function handleExport() {
+    setError(''); setSuccess(''); setExporting(true);
+    try {
+      await api.updateCaption(result.postId, { caption, hookText: '' });
+      const realText = textBoxes.filter(b => b.text && b.text.trim() && b.text !== 'Tap to type');
+      const hasTrim  = Number(trimStart) > 0 || Number(trimEnd) > 0;
+      const hasAdj   = brightness !== 0 || contrast !== 1 || saturation !== 1;
+      const needsRender = realText.length > 0 || hasTrim || hasAdj || burnSubs || enhance || speed !== 1 || cropRatio !== 'none' || cardOn;
+      let finalUrl = enhancedUrl || result.videoUrl;
+      if (needsRender) {
+        setSuccess('Processing video… this can take a few minutes. Keep this page open.');
+        const res = await enhanceJob(result.postId, {
+          burnSubtitles: burnSubs, subtitleStyle, segments, enhance,
+          textOverlays: realText,
+          trim:         { start: Number(trimStart) || 0, end: Number(trimEnd) || 0 },
+          adjustments:  { brightness, contrast, saturation },
+          speed, cropRatio,
+          ...cardOpts()
+        });
+        setEnhancedUrl(res.enhancedVideoUrl);
+        finalUrl = res.enhancedVideoUrl;
+      }
+      setExported({ url: finalUrl });
+      setSuccess('Ready. Download the video and the caption below.');
+    } catch (err) {
+      setSuccess('');
+      setError(err.message || 'Processing failed');
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  async function saveVideo() {
+    const src = mediaUrl(exported?.url);
+    if (!src) return;
+    const name = `video-${result?.postId || Date.now()}.mp4`;
+    try {
+      const r = await fetch(src);
+      if (!r.ok) throw new Error('bad status');
+      const blob = await r.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob); a.download = name;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+    } catch {
+      window.open(src, '_blank');   // fallback: opens the video, then use "Download" from the player menu
+    }
+  }
+
+  async function copyCaption() {
+    try { await navigator.clipboard.writeText(caption); setSuccess('Caption copied.'); }
+    catch {
+      const t = document.createElement('textarea'); t.value = caption; document.body.appendChild(t); t.select();
+      try { document.execCommand('copy'); setSuccess('Caption copied.'); } catch { setError('Could not copy. Select the caption text and copy it.'); }
+      t.remove();
+    }
+  }
+
+  function saveCaptionFile() {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([caption], { type: 'text/plain;charset=utf-8' }));
+    a.download = `caption-${result?.postId || Date.now()}.txt`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 60000);
   }
 
   // Safety gate: risky clips are never posted
@@ -383,7 +453,7 @@ export default function NewPost() {
     return (
       <div>
         <div style={s.reviewHeader}>
-          <h2 style={s.h2}>Review & Post</h2>
+          <h2 style={s.h2}>{downloadOnly ? 'Process & Download' : 'Review & Post'}</h2>
           <button onClick={reset} style={s.ghostBtn}>✕ Start over</button>
         </div>
 
@@ -646,7 +716,7 @@ export default function NewPost() {
           <RegenerateBar postId={result.postId} accountId={accountId} options={capOpts} onCaption={(c, h, locked) => { setCaption(c); if (h && locked) setOnScreenText(h); }} />
         </Section>
 
-        <Section label="Post to Instagram Account">
+        <Section label={downloadOnly ? 'Page style (used for the card and caption)' : 'Post to Instagram Account'}>
           <select id="account-select-review" name="account_id" value={accountId} onChange={e => setAccountId(e.target.value)} style={s.select}>
             <option value="">Select account…</option>
             {accounts.map(a => <option key={a.id} value={a.id}>@{a.username} — {a.name}</option>)}
@@ -654,6 +724,25 @@ export default function NewPost() {
           {accounts.length === 0 && <div style={s.hint}>No accounts yet — go to the Accounts tab and click "Connect Instagram".</div>}
         </Section>
 
+        {downloadOnly ? (
+          <>
+            <div style={s.actions}>
+              <button onClick={handleExport} disabled={exporting} className="shine" style={{ ...s.btn, ...s.btnPrimary, opacity: exporting ? 0.4 : 1 }}>
+                {exporting ? <><span style={s.miniSpinner} /> Processing…</> : (exported ? '🔄 Process again' : '⚙️ Process video')}
+              </button>
+            </div>
+            {exported && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 12 }}>
+                <button onClick={saveVideo} className="shine" style={{ ...s.btn, ...s.btnPrimary, justifyContent: 'center' }}>⬇ Download video</button>
+                <div style={s.actions}>
+                  <button onClick={copyCaption} style={{ ...s.btn, ...s.btnSecondary }}>📋 Copy caption</button>
+                  <button onClick={saveCaptionFile} style={{ ...s.btn, ...s.btnSecondary }}>📄 Caption .txt</button>
+                </div>
+              </div>
+            )}
+          </>
+        ) : (
+          <>
         <div style={s.actions}>
           <button onClick={handlePublish} disabled={posting || !accountId} className="shine" style={{ ...s.btn, ...s.btnPrimary, opacity: posting || !accountId ? 0.4 : 1 }}>
             {posting ? <><span style={s.miniSpinner} /> Posting…</> : '🚀 Post Now'}
@@ -677,6 +766,9 @@ export default function NewPost() {
           </div>
         )}
 
+          </>
+        )}
+
         {showTextEditor && (
           <TextOverlayEditor
             videoSrc={previewUrl}
@@ -691,7 +783,7 @@ export default function NewPost() {
 
   return (
     <div>
-      <h2 style={s.h2}>New Post</h2>
+      <h2 style={s.h2}>{downloadOnly ? 'Export (no posting)' : 'New Post'}</h2>
       {error && <div style={{ ...s.errorBox, whiteSpace: 'pre-line' }}>{error}</div>}
       {step === STEPS.REVIEW && result?.guard && result.guard.level !== 'clear' && (
         <div style={{ ...s.errorBox, whiteSpace: 'pre-line', borderColor: '#ef4444' }}>
@@ -718,7 +810,7 @@ export default function NewPost() {
             <>
               <div style={s.dropIcon}>⬆</div>
               <div style={{ color: '#555' }}>Drop video here or <span style={{ color: '#833ab4', cursor: 'pointer' }}>browse</span></div>
-              <div style={s.hint}>MP4 / MOV / AVI up to 200 MB</div>
+              <div style={s.hint}>MP4 / MOV / AVI up to 500 MB</div>
             </>
           )}
         </div>
