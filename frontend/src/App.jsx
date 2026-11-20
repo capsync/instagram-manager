@@ -53,6 +53,11 @@ const TABS = [
       <path d="M12 7v5l3 2" stroke={active ? '#fff' : '#8B93A7'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
     </svg>
   )},
+  { id: 'export', label: 'Export', icon: (active) => (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+      <path d="M12 4v11m0 0l-4-4m4 4l4-4M5 19h14" stroke={active ? '#fff' : '#8B93A7'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+  )},
   { id: 'accounts', label: 'Accounts', icon: (active) => (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
       <circle cx="12" cy="8" r="4" stroke={active ? '#fff' : '#8B93A7'} strokeWidth="2"/>
@@ -284,6 +289,7 @@ export default function App() {
         {/* NewPost stays mounted so in-progress work isn't lost when switching tabs */}
         <div className="tab-enter" style={{ display: tab === 'new' ? 'block' : 'none' }}><NewPost /></div>
         <div className="tab-enter" style={{ display: tab === 'multi' ? 'block' : 'none' }}><QuickPost /></div>
+        <div className="tab-enter" style={{ display: tab === 'export' ? 'block' : 'none' }}><NewPost downloadOnly /></div>
         {tab === 'dashboard' && <div key="dashboard" className="tab-enter"><Dashboard onNavigate={goTab} /></div>}
         <Suspense fallback={<TabFallback />}>
           {tab === 'history'  && <div key="history"  className="tab-enter"><PostHistory /></div>}
@@ -329,6 +335,6 @@ const s = {
   main:       { flex: 1, maxWidth: 600, margin: '0 auto', width: '100%', padding: '16px 16px 16px', overflowX: 'hidden' },
   nav:        { position: 'fixed', left: 8, right: 8, bottom: 'calc(10px + env(safe-area-inset-bottom, 0px))', maxWidth: 560, margin: '0 auto', height: 68, borderRadius: 26, background: 'rgba(16,18,26,0.74)', backdropFilter: 'blur(24px) saturate(150%)', WebkitBackdropFilter: 'blur(24px) saturate(150%)', boxShadow: '0 20px 44px -14px rgba(0,0,0,.85), 0 0 46px -12px rgba(168,85,247,.4), inset 0 1px 0 rgba(255,255,255,.09)', display: 'flex', alignItems: 'center', justifyContent: 'space-around', zIndex: 100 },
   navBtn:     { flex: 1, minWidth: 0, minHeight: 44, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, background: 'none', border: 'none', cursor: 'pointer', padding: '8px 0' },
-  navIcon:    { width: 44, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center' },
+  navIcon:    { width: 40, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center' },
   navLabel:   { fontSize: 10, fontWeight: 600, transition: 'color 0.2s', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
 };
