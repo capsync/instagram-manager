@@ -285,6 +285,29 @@ function computeLayout({ cardH, srcW, srcH, offsetY = 0 }) {
   };
 }
 
+/**
+ * "Reaction" layout: headline on top, video in the middle, tweet card under the video.
+ * The whole group is centred vertically; offsetY (px, + = lower) moves it. A zero height means that part is absent.
+ */
+function computeLayoutTweet({ headH = 0, cardH = 0, srcW, srcH, offsetY = 0 }) {
+  const SAFE_TOP = 110, SAFE_BOTTOM = 170, GAP = 28;
+  const gH = headH > 0 ? GAP : 0, gC = cardH > 0 ? GAP : 0;
+  const availH = CANVAS_H - SAFE_TOP - SAFE_BOTTOM - headH - cardH - gH - gC;
+  const s = Math.min(CONTENT_W / srcW, availH / srcH);
+  const even = (n) => Math.max(2, Math.round(n / 2) * 2);
+  const vidW = even(srcW * s), vidH = even(srcH * s);
+  const groupH = headH + gH + vidH + gC + cardH;
+  const centred = Math.round((CANVAS_H - groupH) / 2) + (Number(offsetY) || 0);
+  const top = Math.min(Math.max(40, centred), CANVAS_H - groupH - 40);
+  const vidY = top + headH + gH;
+  return {
+    canvasW: CANVAS_W, canvasH: CANVAS_H,
+    headX: MARGIN, headY: top,
+    vidW, vidH, vidX: MARGIN + Math.round((CONTENT_W - vidW) / 2), vidY,
+    cardX: MARGIN, cardY: vidY + vidH + gC
+  };
+}
+
 function canvasColorFor(theme) { return (THEMES[theme] || THEMES.dark).canvas; }
 
-module.exports = { renderCard, computeLayout, canvasColorFor, CANVAS_W, CANVAS_H, CARD_W, MARGIN };
+module.exports = { renderCard, computeLayout, computeLayoutTweet, canvasColorFor, CANVAS_W, CANVAS_H, CARD_W, MARGIN };
