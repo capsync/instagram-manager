@@ -119,6 +119,7 @@ export const api = {
     Object.entries(toApiOptions(options)).forEach(([k, v]) => fd.append(k, String(v)));
     return requestJob('POST', '/content/process-file', fd, true, onStatus);
   },
+  generateReaction: (postId, body = {}) => request('POST', `/content/reaction/${postId}`, body),
   regenerateCaption: (postId, account_id, options = {}) =>
     request('POST', `/content/regenerate/${postId}`, { account_id: account_id || undefined, ...toApiOptions(options) }),
   updateCaption: (postId, data) => request('PUT', `/content/caption/${postId}`, data),
