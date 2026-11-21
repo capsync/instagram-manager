@@ -598,4 +598,43 @@ async function generateSubtitleLines({ transcript, segments }) {
   return segments || [];
 }
 
-module.exports = { generateContent, generateCaption, generateSubtitleLines, sanitizeOptions, parseBrief };
+const REACTION_PROMPT = `You write ONE short reaction tweet from an ordinary fan who just watched this clip. It is shown in a tweet-style card under the video.
+VOICE: natural, casual, specific, like a real person typing fast. Not an ad, not a caption, not a headline.
+VALUE: point at ONE specific thing that makes the clip land (a detail, a comparison, a moment, a sound, a skill) so the line tells viewers what to notice.
+RULES:
+- 1-2 sentences, under 180 characters.
+- Use only facts that appear in the context below. Invent no stats, dates, quotes or claims.
+- Do not put words in the mouth of any real named person and do not quote anyone.
+- No hashtags, no @mentions, no links.
+- At most one emoji, only if it fits. At most one ALL-CAPS word for emphasis.
+- Never say "the clip", "this video", or mention AI.
+- Pure US English.
+Output only the tweet text, nothing else.`;
+
+async function generateReaction({ headline = '', caption = '', transcript = '', originalCaption = '', tweak = '' } = {}) {
+  const context = [
+    headline        && `Headline shown above the video: ${headline}`,
+    caption         && `Caption written for the post: ${String(caption).substring(0, 1500)}`,
+    originalCaption && `Original post caption: ${String(originalCaption).substring(0, 800)}`,
+    transcript      && `Audio transcript: ${String(transcript).substring(0, 1200)}`,
+    tweak           && `Extra direction from the page owner: ${String(tweak).substring(0, 300)}`
+  ].filter(Boolean).join('\n\n');
+  if (!context) throw new Error('Nothing to base the reaction on yet.');
+  const completion = await getGroq().chat.completions.create({
+    model: 'openai/gpt-oss-120b',
+    messages: [
+      { role: 'system', content: REACTION_PROMPT },
+      { role: 'user', content: `${context}\n\nWrite the reaction tweet now:` }
+    ],
+    max_tokens: 1500,
+    temperature: 0.9
+  });
+  let t = String(completion.choices?.[0]?.message?.content || '').trim();
+  t = t.replace(/^["'“”\s]+|["'“”\s]+$/g, '').replace(/^(tweet|reaction)\s*:\s*/i, '').replace(/#\w+/g, '').replace(/@\w+/g, '').replace(/\s{2,}/g, ' ').trim();
+  t = limitToOneEmoji(t);
+  if (t.length > 220) t = t.slice(0, 220).replace(/\s+\S*$/, '') + '…';
+  if (!t) throw new Error('The reaction came back empty. Try again.');
+  return t;
+}
+
+module.exports = { generateReaction, generateContent, generateCaption, generateSubtitleLines, sanitizeOptions, parseBrief };
