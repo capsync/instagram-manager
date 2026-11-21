@@ -307,5 +307,4 @@ const st = {
   knob:    { position: 'absolute', top: 2, width: 24, height: 24, borderRadius: '50%', background: '#fff', transition: 'left .15s' },
   warn:    { background: 'rgba(240,160,96,0.1)', border: '1px solid rgba(240,160,96,0.3)', borderRadius: 10, padding: 12, fontSize: 12, color: '#f0a060', lineHeight: 1.5 },
   error:   { background: 'rgba(255,90,90,0.1)', border: '1px solid rgba(255,90,90,0.3)', borderRadius: 10, padding: 12, fontSize: 13, color: '#ff7070', marginBottom: 12 },
-  helpBtn: { width: '100%', padding: '10px 14px', marginTop: 6, background: 'transparent', border: '1px dashed #2a2a2a', borderRadius: 10, color: '#666', fontSize: 12, cursor: 'pointer' },
-};
+  helpBtn: { width: '100%', padding: '10px 14px', marginTop
