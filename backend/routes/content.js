@@ -9,7 +9,7 @@ const { transcribeVideo, segmentsToSRT } = require('../services/transcription');
 const { generateContent, generateSubtitleLines, generateReaction } = require('../services/captionGenerator');
 const { enhanceVideo, renderFramed, renderTweet, detectContentRect } = require('../services/videoProcessor');
 const remoteRender = require('../services/remoteRender');
-const { renderCard } = require('../services/brandCard');
+const { renderCard, renderHeadlineCard, renderTweetCard } = require('../services/brandCard');
 const { assessClip, extractCredit } = require('../services/contentGuard');
 const logger = require('../services/logger');
 
@@ -322,15 +322,23 @@ router.post('/enhance/:postId', heavy(async (req, res, next) => {
     if (tweetMode) {
       const reaction = String(brandCard.text || '').trim();
       if (!reaction) return res.status(400).json({ error: 'Write the reaction comment first. It goes in the tweet card under the video.' });
-      const frame = { ...(brandCard.frame || {}), cardScale: (brandCard.frame && brandCard.frame.cardScale) || 0.9 };
-      const built = await buildBrandCard(req, account_id || post.account_id, reaction, path.dirname(inputPath), frame, 'card', brandCard.quality, brandCard.theme || 'light');
-      if (built.error) return res.status(built.status).json({ error: built.error });
-      tweetCard = { cardPath: built.brand.cardPath, width: built.card.width, height: built.card.height };
-      tweetCanvas = built.card.canvasColor;
+      const acct = (account_id || post.account_id) ? await getDB().get('SELECT * FROM accounts WHERE id=$1', [account_id || post.account_id]) : null;
+      if (!acct) return res.status(400).json({ error: 'Pick a page first. Its reaction profile is used on the tweet card.' });
+      const uid = req.headers['x-user-id'];
+      if (uid && acct.user_id && acct.user_id !== uid) return res.status(403).json({ error: 'Not your page.' });
+      if (!String(acct.react_name || '').trim() || !String(acct.react_handle || '').trim())
+        return res.status(400).json({ error: 'This page has no reaction profile yet. Open Accounts, edit the page and fill in "Reaction profile (fictional)".' });
+      const theme = (brandCard.theme === 'dark' || brandCard.theme === 'light') ? brandCard.theme : 'light';
+      const cardImg = await renderTweetCard({ name: acct.react_name, handle: acct.react_handle, verified: !!acct.react_verified, avatar: acct.react_avatar, text: reaction, theme });
+      const sha1 = (buf) => require('crypto').createHash('sha1').update(buf).digest('hex').slice(0, 20);
+      const cp = path.join(path.dirname(inputPath), `tweet_${sha1(cardImg.buffer)}.png`);
+      if (!fs.existsSync(cp)) fs.writeFileSync(cp, cardImg.buffer);
+      tweetCard = { cardPath: cp, width: cardImg.width, height: cardImg.height };
+      tweetCanvas = cardImg.canvasColor;
       const headline = String(brandCard.headline || '').trim();
       if (headline) {
-        const h = await renderCard({ plain: true, text: headline, theme: brandCard.theme || 'light' });
-        const hp = path.join(path.dirname(inputPath), `head_${require('crypto').createHash('sha1').update(h.buffer).digest('hex').slice(0, 20)}.png`);
+        const h = await renderHeadlineCard({ text: headline, theme });
+        const hp = path.join(path.dirname(inputPath), `head_${sha1(h.buffer)}.png`);
         if (!fs.existsSync(hp)) fs.writeFileSync(hp, h.buffer);
         tweetHead = { cardPath: hp, width: h.width, height: h.height };
       }
@@ -343,118 +351,4 @@ router.post('/enhance/:postId', heavy(async (req, res, next) => {
     }
     if (framedMode && brandCard.mode === 'cinema' && String(brandCard.text || '').trim()) {
       const c = await renderCard({ plain: true, subtitle: true, text: String(brandCard.text).trim() });
-      const cp = path.join(path.dirname(inputPath), `card_${require('crypto').createHash('sha1').update(c.buffer).digest('hex').slice(0, 20)}.png`);
-      if (!fs.existsSync(cp)) fs.writeFileSync(cp, c.buffer);
-      framedCard = { cardPath: cp, width: c.width, height: c.height };
-    }
-
-    let result;
-    const tRender = Date.now();
-    const tweetArgs = () => ({ inputPath, frame: brandCard.frame, trim, quality: brandCard.quality || 'best', head: tweetHead, card: tweetCard, canvasColor: tweetCanvas });
-    const doLocal = () => tweetMode ? renderTweet(tweetArgs()) : framedMode
-      ? renderFramed({ inputPath, frame: brandCard.frame, trim, quality: brandCard.quality || 'best', card: framedCard })
-      : enhanceVideo({ inputPath, srtContent: post.subtitles_srt || '', segments: segments || [], textOverlays, burnSubtitles, subtitleStyle, enhance, trim, adjustments, speed, cropRatio, brand });
-    try {
-      if (req.renderWorker) {
-        // A free render worker is reserved for this job; if it fails, render here instead (waiting in the local line).
-        try {
-          result = tweetMode
-            ? await remoteRender.renderOn(req.renderWorker, { kind: 'tweet', inputPath, head: tweetHead, card: tweetCard, payload: { frame: brandCard.frame, trim, quality: brandCard.quality || 'best', canvasColor: tweetCanvas } })
-            : framedMode
-            ? await remoteRender.renderOn(req.renderWorker, { kind: 'framed', inputPath, card: framedCard, payload: { frame: brandCard.frame, trim, quality: brandCard.quality || 'best' } })
-            : await remoteRender.renderOn(req.renderWorker, {
-                kind: 'layout', inputPath, card: brand && { cardPath: brand.cardPath, width: 0, height: brand.cardH },
-                payload: {
-                  params: { srtContent: post.subtitles_srt || '', segments: segments || [], textOverlays, burnSubtitles, subtitleStyle, enhance, trim, adjustments, speed, cropRatio },
-                  brand: { cardH: brand.cardH, frame: brand.frame, canvasColor: brand.canvasColor, quality: brand.quality }
-                }
-              });
-        } catch (e) {
-          logger.warn('Render worker failed, rendering here instead: ' + e.message);
-          result = await runHeavyLocal(doLocal);
-        }
-      } else {
-        result = await doLocal();
-      }
-    } finally {
-      if (brand?.cardPath && !brand.keepCard && fs.existsSync(brand.cardPath)) fs.unlinkSync(brand.cardPath);
-      logger.info(`[timing] render: ${Math.round((Date.now() - tRender) / 1000)}s`);
-    }
-    await getDB().run('UPDATE posts SET enhanced_video_path=$1 WHERE id=$2', [result.path, post.id]);
-    res.json({ enhancedVideoUrl: result.url, message: 'Video enhanced successfully' });
-  } catch (err) { next(err); }
-}, { remote: true }));
-
-// Attach a video file to an existing post (used when URL was Instagram — no download)
-router.post('/attach-video/:postId', upload.single('video'), async (req, res, next) => {
-  try {
-    if (!req.file) return res.status(400).json({ error: 'No video file' });
-    const post = await getDB().get('SELECT id FROM posts WHERE id=$1', [req.params.postId]);
-    if (!post) return res.status(404).json({ error: 'Post not found' });
-    await getDB().run('UPDATE posts SET local_video_path=$1 WHERE id=$2', [req.file.path, req.params.postId]);
-    const base = (process.env.PUBLIC_URL || '').replace(/\/$/, '');
-    const autoCrop = await detectContentRect(req.file.path).catch(() => null);
-    res.json({ videoUrl: `${base}/uploads/${req.file.filename}`, autoCrop });
-  } catch (err) { next(err); }
-});
-
-router.put('/caption/:postId', async (req, res, next) => {
-  try {
-    const { caption, hookText } = req.body;
-    const db = getDB();
-    if (caption !== undefined)  await db.run('UPDATE posts SET final_caption=$1 WHERE id=$2', [caption, req.params.postId]);
-    if (hookText !== undefined) await db.run('UPDATE posts SET hook_text=$1    WHERE id=$2', [hookText, req.params.postId]);
-    res.json({ message: 'Updated' });
-  } catch (err) { next(err); }
-});
-
-// Re-write the caption for an existing post without re-downloading/re-uploading the video.
-// Body (all optional): account_id, instructions, must_include, mentions, hashtags, ai_hashtags, credit_line, tweak
-// Writes the reaction comment for the tweet card (based on the headline + caption already written for this post)
-router.post('/reaction/:postId', async (req, res, next) => {
-  try {
-    const post = await getDB().get('SELECT * FROM posts WHERE id=$1', [req.params.postId]);
-    if (!post) return res.status(404).json({ error: 'Post not found' });
-    const { headline = '', caption = '', tweak = '' } = req.body || {};
-    const reaction = await generateReaction({
-      headline,
-      caption: caption || post.generated_caption || '',
-      transcript: srtToText(post.subtitles_srt),
-      originalCaption: post.original_caption || '',
-      tweak
-    });
-    res.json({ postId: post.id, reaction });
-  } catch (err) { next(err); }
-});
-
-router.post('/regenerate/:postId', async (req, res, next) => {
-  try {
-    const db = getDB();
-    const post = await db.get('SELECT * FROM posts WHERE id=$1', [req.params.postId]);
-    if (!post) return res.status(404).json({ error: 'Post not found' });
-
-    const accountId = req.body.account_id || post.account_id;
-    const account = accountId ? await db.get('SELECT * FROM accounts WHERE id=$1', [accountId]) : null;
-    const fs = require('fs');
-    const videoPath = post.local_video_path && fs.existsSync(post.local_video_path) ? post.local_video_path : null;
-
-    if (!videoPath && !(post.original_caption || '').trim() && !(post.subtitles_srt || '').trim())
-      return res.status(400).json({ error: 'Nothing to write the caption from yet. Upload the video first.' });
-
-    const options = { ...readCaptionOptions(req.body, !!post.video_url), tweak: req.body.tweak, creditHandle: post.credit_handle || undefined };
-    const { caption, onScreenText, tosLocked } = await generateContent({
-      videoPath,
-      transcript: srtToText(post.subtitles_srt),
-      originalCaption: post.original_caption || '',
-      videoTitle: '',
-      captionStyle: account?.caption_style || 'casual',
-      customPrompt: account?.caption_prompt,
-      options
-    });
-
-    await db.run('UPDATE posts SET generated_caption=$1 WHERE id=$2', [caption, post.id]);
-    res.json({ postId: post.id, generatedCaption: caption, hookText: onScreenText, tosLocked: !!tosLocked });
-  } catch (err) { next(err); }
-});
-
-module.exports = router;
+      const cp = path.join(p
