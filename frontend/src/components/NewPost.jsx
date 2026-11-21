@@ -68,6 +68,8 @@ export default function NewPost({ downloadOnly = false } = {}) {
   const [scheduleTime, setScheduleTime] = useState('');
   const [posting, setPosting]           = useState(false);
   const [exporting, setExporting]         = useState(false);
+  const [reaction, setReaction]           = useState('');   // the tweet-card comment (Reaction layout)
+  const [reactionBusy, setReactionBusy]   = useState(false);
   const [exported, setExported]           = useState(null);   // { url } once the processed video is ready to download
   const [error, setError]               = useState('');
   const [success, setSuccess]           = useState('');
@@ -75,7 +77,7 @@ export default function NewPost({ downloadOnly = false } = {}) {
   const [capOpts, setCapOpts]             = useState({});
   const [badPreview, setBadPreview]       = useState('');
   const [captionBusy, setCaptionBusy]     = useState(false);
-  const [layout, setLayoutState]         = useState(() => { try { return (v => (['text', 'clean', 'cinema'].includes(v) ? v : 'card'))(localStorage.getItem('im_layout')); } catch { return 'card'; } });
+  const [layout, setLayoutState]         = useState(() => { try { return (v => (['text', 'clean', 'cinema', 'tweet'].includes(v) ? v : 'card'))(localStorage.getItem('im_layout')); } catch { return 'card'; } });
   const setLayout = (v) => { setLayoutState(v); try { localStorage.setItem('im_layout', v); } catch { /* ignore */ } };
   // Card background: 'auto' = the page's own theme, or force black / white for this post
   const [theme, setThemeState]            = useState(() => { try { const t = localStorage.getItem('im_theme'); return t === 'dark' || t === 'light' ? t : 'auto'; } catch { return 'auto'; } });
@@ -106,7 +108,7 @@ export default function NewPost({ downloadOnly = false } = {}) {
     setBrightness(0); setContrast(1); setSaturation(1); setSpeed(1);
     setCropRatio('none');
     setScheduling(false); setScheduleTime('');
-    setError(''); setSuccess(''); setUrl(''); setFile(null); setCapOpts({}); setExported(null);
+    setError(''); setSuccess(''); setUrl(''); setFile(null); setCapOpts({}); setExported(null); setReaction('');
   }
 
   // One tap: read the copied link from the clipboard, fill the box, and start processing.
@@ -173,6 +175,7 @@ export default function NewPost({ downloadOnly = false } = {}) {
   }
 
   async function handleEnhance() {
+    if (tweet && !cardOn) return setError(TWEET_MSG);
     const hasText  = textBoxes.some(b => b.text);
     const hasTrim  = Number(trimStart) > 0 || Number(trimEnd) > 0;
     const hasAdj   = brightness !== 0 || contrast !== 1 || saturation !== 1;
@@ -205,6 +208,7 @@ export default function NewPost({ downloadOnly = false } = {}) {
 
   // ── Export tab: render with the current settings, then download (nothing is posted) ──
   async function handleExport() {
+    if (tweet && !cardOn) return setError(TWEET_MSG);
     setError(''); setSuccess(''); setExporting(true);
     try {
       await api.updateCaption(result.postId, { caption, hookText: '' });
@@ -253,6 +257,19 @@ export default function NewPost({ downloadOnly = false } = {}) {
     }
   }
 
+  async function writeReaction() {
+    if (!result?.postId) return;
+    setReactionBusy(true); setError('');
+    try {
+      const r = await api.generateReaction(result.postId, { headline: onScreenText, caption });
+      setReaction(r.reaction || '');
+    } catch (err) {
+      setError(err.message || 'Could not write the reaction. Try again.');
+    } finally {
+      setReactionBusy(false);
+    }
+  }
+
   async function copyCaption() {
     try { await navigator.clipboard.writeText(caption); setSuccess('Caption copied.'); }
     catch {
@@ -281,6 +298,7 @@ export default function NewPost({ downloadOnly = false } = {}) {
 
   async function handlePublish() {
     if (!accountId) return setError('Select an Instagram account first');
+    if (tweet && !cardOn) return setError(TWEET_MSG);
     if (!guardOk()) return;
     setPosting(true); setError(''); setSuccess('');
     try {
@@ -395,10 +413,13 @@ export default function NewPost({ downloadOnly = false } = {}) {
   const onRenderJob  = (j) => setSuccess(j.status === 'queued' ? 'Rendering video… waiting for another job to finish' : `Rendering video… ${j.elapsed_s || 0}s`);
   const enhanceJob   = (id, opts) => api.enhanceVideo(id, opts, onRenderJob);
   const framed    = layout === 'clean' || layout === 'cinema';                  // direct 3:4 / 4:3 video, no page card
-  const frameMode = !framed && (layout === 'text' || !!accountId);                          // show the frame editor (crop + live preview)
-  const cardOn    = framed || (frameMode && (layout === 'text' || !!onScreenText.trim()));   // render the 1080x1920 layout when posting
+  const tweet     = layout === 'tweet';                                         // headline on top, video, tweet card (page profile + reaction) under it
+  const frameMode = !framed && !tweet && (layout === 'text' || !!accountId);                // show the frame editor (crop + live preview)
+  const tweetReady = tweet && !!accountId && !!reaction.trim();
+  const cardOn    = framed || tweetReady || (frameMode && (layout === 'text' || !!onScreenText.trim()));   // render the 1080x1920 layout when posting
+  const TWEET_MSG = 'The Reaction layout needs a page (its saved profile goes on the tweet card) and a reaction comment. Pick a page and tap "Write it", or choose another layout.';
   const srcUrl    = mediaUrl(result?.videoUrl);
-  const cardOpts = () => (cardOn ? { ...(accountId ? { account_id: accountId } : {}), brandCard: { enabled: true, mode: layout, text: onScreenText, frame, quality, ...(theme !== 'auto' ? { theme } : {}) } } : {});
+  const cardOpts = () => (cardOn ? { ...(accountId ? { account_id: accountId } : {}), brandCard: { enabled: true, mode: layout, text: tweet ? reaction : onScreenText, ...(tweet ? { headline: onScreenText } : {}), frame, quality, ...(theme !== 'auto' ? { theme } : {}) } } : {});
   useEffect(() => {
     if (!frameMode || !result) { setCardImg(''); return; }
     const t = setTimeout(() => {
@@ -476,10 +497,10 @@ export default function NewPost({ downloadOnly = false } = {}) {
           />
           <div style={{ marginTop: 16 }}>
             <div style={{ fontSize: 11, fontWeight: 700, color: '#666', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 8 }}>Layout</div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              {[['card', 'Page card'], ['text', 'Text only'], ['clean', 'Video only'], ['cinema', 'Cinema']].map(([key, label]) => (
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {[['card', 'Page card'], ['text', 'Text only'], ['tweet', 'Reaction'], ['clean', 'Video only'], ['cinema', 'Cinema']].map(([key, label]) => (
                 <button key={key} type="button" onClick={() => setLayout(key)}
-                  style={{ flex: 1, padding: '11px 6px', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                  style={{ flex: '1 1 30%', padding: '11px 6px', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer',
                     background: layout === key ? 'rgba(168,85,247,0.15)' : '#111',
                     border: `1px solid ${layout === key ? 'rgba(168,85,247,0.5)' : '#2a2a2a'}`,
                     color: layout === key ? '#c084fc' : '#999' }}>
@@ -502,6 +523,18 @@ export default function NewPost({ downloadOnly = false } = {}) {
             {layout === 'card' && !accountId && <div style={{ fontSize: 11, color: '#f0a060', marginTop: 8 }}>Pick a page below to use the page card, or switch to Text only.</div>}
             {layout === 'card' && !!accountId && !onScreenText.trim() && <div style={{ fontSize: 11, color: '#f0a060', marginTop: 8 }}>Add on-screen text above to use the page card.</div>}
             {layout === 'text' && <div style={{ fontSize: 11, color: '#555', marginTop: 8 }}>Just the text line above the video. No page picture, name or handle. You can still post to any page.</div>}
+            {tweet && (
+              <div style={{ marginTop: 10 }}>
+                <div style={{ fontSize: 11, color: '#555', marginBottom: 8 }}>The on-screen text above becomes the headline on top. The comment below goes in a tweet card under the video, shown with the selected page's saved profile (name, handle, picture).</div>
+                {!accountId && <div style={{ fontSize: 11, color: '#f0a060', marginBottom: 8 }}>Pick a page below first. Its saved profile is used on the tweet card.</div>}
+                <textarea value={reaction} onChange={e => setReaction(e.target.value)} rows={2} placeholder="Reaction comment (tweet under the video)…"
+                  style={{ ...s.textarea, fontSize: 15, background: 'transparent', border: '1px solid #2a2a4a', color: '#fff', resize: 'vertical' }} />
+                <button type="button" onClick={writeReaction} disabled={reactionBusy || !result?.postId}
+                  style={{ ...s.btn, ...s.btnSecondary, marginTop: 8, opacity: reactionBusy ? 0.5 : 1 }}>
+                  {reactionBusy ? 'Writing…' : (reaction.trim() ? '🔄 Write another' : '✨ Write it')}
+                </button>
+              </div>
+            )}
             {layout === 'clean' && <div style={{ fontSize: 11, color: '#555', marginTop: 8 }}>Just the video at 3:4 (tall) or 4:3 (wide), high quality. No card, no text on the video. Only the caption.</div>}
             {layout === 'cinema' && <div style={{ fontSize: 11, color: '#555', marginTop: 8 }}>Video at 3:4 or 4:3 with the on-screen text above laid over the lower part of the picture, like cinema pages. No card.</div>}
             {cardOn && (
