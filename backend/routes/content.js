@@ -6,8 +6,8 @@ const { v4: uuidv4 } = require('uuid');
 const { getDB } = require('../models/db');
 const { downloadVideo, getVideoMetadata } = require('../services/downloader');
 const { transcribeVideo, segmentsToSRT } = require('../services/transcription');
-const { generateContent, generateSubtitleLines } = require('../services/captionGenerator');
-const { enhanceVideo, renderFramed, detectContentRect } = require('../services/videoProcessor');
+const { generateContent, generateSubtitleLines, generateReaction } = require('../services/captionGenerator');
+const { enhanceVideo, renderFramed, renderTweet, detectContentRect } = require('../services/videoProcessor');
 const remoteRender = require('../services/remoteRender');
 const { renderCard } = require('../services/brandCard');
 const { assessClip, extractCredit } = require('../services/contentGuard');
@@ -316,8 +316,27 @@ router.post('/enhance/:postId', heavy(async (req, res, next) => {
     // Page card layout (card on top, video below). Name/handle fall back to the connected account's own.
     // 'clean' / 'cinema' = direct 3:4 or 4:3 video (no page card). Cinema puts subtitle-style text over the video.
     const framedMode = wantsCard && ['clean', 'cinema'].includes(brandCard.mode);
+    // 'tweet' = Reaction layout: headline on top, video, tweet card (page profile + reaction comment) under it.
+    const tweetMode = wantsCard && brandCard.mode === 'tweet';
+    let tweetHead = null, tweetCard = null, tweetCanvas = '#ffffff';
+    if (tweetMode) {
+      const reaction = String(brandCard.text || '').trim();
+      if (!reaction) return res.status(400).json({ error: 'Write the reaction comment first. It goes in the tweet card under the video.' });
+      const frame = { ...(brandCard.frame || {}), cardScale: (brandCard.frame && brandCard.frame.cardScale) || 0.9 };
+      const built = await buildBrandCard(req, account_id || post.account_id, reaction, path.dirname(inputPath), frame, 'card', brandCard.quality, brandCard.theme || 'light');
+      if (built.error) return res.status(built.status).json({ error: built.error });
+      tweetCard = { cardPath: built.brand.cardPath, width: built.card.width, height: built.card.height };
+      tweetCanvas = built.card.canvasColor;
+      const headline = String(brandCard.headline || '').trim();
+      if (headline) {
+        const h = await renderCard({ plain: true, text: headline, theme: brandCard.theme || 'light' });
+        const hp = path.join(path.dirname(inputPath), `head_${require('crypto').createHash('sha1').update(h.buffer).digest('hex').slice(0, 20)}.png`);
+        if (!fs.existsSync(hp)) fs.writeFileSync(hp, h.buffer);
+        tweetHead = { cardPath: hp, width: h.width, height: h.height };
+      }
+    }
     let brand = null, framedCard = null;
-    if (wantsCard && !framedMode) {
+    if (wantsCard && !framedMode && !tweetMode) {
       const built = await buildBrandCard(req, account_id || post.account_id, brandCard.text, path.dirname(inputPath), brandCard.frame, brandCard.mode, brandCard.quality, brandCard.theme);
       if (built.error) return res.status(built.status).json({ error: built.error });
       brand = built.brand;
@@ -331,14 +350,17 @@ router.post('/enhance/:postId', heavy(async (req, res, next) => {
 
     let result;
     const tRender = Date.now();
-    const doLocal = () => framedMode
+    const tweetArgs = () => ({ inputPath, frame: brandCard.frame, trim, quality: brandCard.quality || 'best', head: tweetHead, card: tweetCard, canvasColor: tweetCanvas });
+    const doLocal = () => tweetMode ? renderTweet(tweetArgs()) : framedMode
       ? renderFramed({ inputPath, frame: brandCard.frame, trim, quality: brandCard.quality || 'best', card: framedCard })
       : enhanceVideo({ inputPath, srtContent: post.subtitles_srt || '', segments: segments || [], textOverlays, burnSubtitles, subtitleStyle, enhance, trim, adjustments, speed, cropRatio, brand });
     try {
       if (req.renderWorker) {
         // A free render worker is reserved for this job; if it fails, render here instead (waiting in the local line).
         try {
-          result = framedMode
+          result = tweetMode
+            ? await remoteRender.renderOn(req.renderWorker, { kind: 'tweet', inputPath, head: tweetHead, card: tweetCard, payload: { frame: brandCard.frame, trim, quality: brandCard.quality || 'best', canvasColor: tweetCanvas } })
+            : framedMode
             ? await remoteRender.renderOn(req.renderWorker, { kind: 'framed', inputPath, card: framedCard, payload: { frame: brandCard.frame, trim, quality: brandCard.quality || 'best' } })
             : await remoteRender.renderOn(req.renderWorker, {
                 kind: 'layout', inputPath, card: brand && { cardPath: brand.cardPath, width: 0, height: brand.cardH },
@@ -388,6 +410,23 @@ router.put('/caption/:postId', async (req, res, next) => {
 
 // Re-write the caption for an existing post without re-downloading/re-uploading the video.
 // Body (all optional): account_id, instructions, must_include, mentions, hashtags, ai_hashtags, credit_line, tweak
+// Writes the reaction comment for the tweet card (based on the headline + caption already written for this post)
+router.post('/reaction/:postId', async (req, res, next) => {
+  try {
+    const post = await getDB().get('SELECT * FROM posts WHERE id=$1', [req.params.postId]);
+    if (!post) return res.status(404).json({ error: 'Post not found' });
+    const { headline = '', caption = '', tweak = '' } = req.body || {};
+    const reaction = await generateReaction({
+      headline,
+      caption: caption || post.generated_caption || '',
+      transcript: srtToText(post.subtitles_srt),
+      originalCaption: post.original_caption || '',
+      tweak
+    });
+    res.json({ postId: post.id, reaction });
+  } catch (err) { next(err); }
+});
+
 router.post('/regenerate/:postId', async (req, res, next) => {
   try {
     const db = getDB();
