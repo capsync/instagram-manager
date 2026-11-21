@@ -121,7 +121,7 @@ function verifyRules({ caption, hookText }, opts) {
   return missing;
 }
 
-const LAYOUTS = ['card', 'text', 'clean', 'cinema'];
+const LAYOUTS = ['card', 'text', 'clean', 'cinema', 'tweet'];
 
 function fullFrame(autoCrop) {
   return autoCrop
@@ -188,9 +188,17 @@ function createAutopilot({ store, call, now = () => new Date(), sleep = (ms) => 
       caption = r.generatedCaption; hook = r.hookText;
     }
 
+    // 3b. Reaction layout: headline on top (the on-screen text), a fan-style reaction in the tweet card under the video
+    let cardText = hook || '', headline = '';
+    if (mode === 'tweet') {
+      headline = hook || '';
+      const rx = await call('POST', `/api/content/reaction/${proc.postId}`, { headline, caption }, userId, 3 * 60 * 1000);
+      cardText = rx.reaction;
+    }
+
     // 4. render the layout (card on top, video below)
     await call('POST', `/api/content/enhance/${proc.postId}`,
-      { account_id: page.id, brandCard: { enabled: true, mode, text: hook || '', frame: fullFrame(proc.autoCrop), theme: opts.theme, quality: opts.quality || 'best' } }, userId, 30 * 60 * 1000);
+      { account_id: page.id, brandCard: { enabled: true, mode, text: cardText, headline, frame: fullFrame(proc.autoCrop), theme: opts.theme, quality: opts.quality || 'best' } }, userId, 30 * 60 * 1000);
 
     // 5. publish, then wait for the result
     await call('POST', `/api/posts/${proc.postId}/publish`, { account_id: page.id, caption, hookText: hook }, userId, 60 * 1000);
