@@ -61,6 +61,10 @@ async function renderOn(w, job) {
       body.cardB64 = fs.readFileSync(job.card.cardPath).toString('base64');
       body.card = { width: job.card.width, height: job.card.height };
     }
+    if (job.head?.cardPath && fs.existsSync(job.head.cardPath)) {   // 'tweet' layout: headline image too
+      body.headB64 = fs.readFileSync(job.head.cardPath).toString('base64');
+      body.head = { width: job.head.width, height: job.head.height };
+    }
     const t0 = Date.now();
     const start = await axios.post(`${w.url}/render`, body, { headers: headers(), timeout: 60000, maxBodyLength: Infinity });
     const id = start.data.jobId;
