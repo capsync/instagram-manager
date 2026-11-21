@@ -3,7 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 const logger = require('./logger');
-const { computeLayout } = require('./brandCard');
+const { computeLayout, computeLayoutTweet } = require('./brandCard');
 
 const THREADS = String(process.env.FFMPEG_THREADS || '1');
 
@@ -732,6 +732,49 @@ async function renderFramed({ inputPath, frame, trim, quality = 'best', card }) 
   return { path: outputPath, filename: outFilename, url: `${base}/uploads/${outFilename}` };
 }
 
+// ── "Reaction" layout: headline PNG on top, the video, and a tweet-card PNG under it, on a 1080x1920 canvas ──────
+// head / card = { cardPath, width, height } (transparent PNGs, 952px wide). quality 'fast' = 720x1280.
+async function renderTweet({ inputPath, frame, trim, quality = 'best', head, card, canvasColor = '#ffffff' }) {
+  const outFilename = `enhanced_${uuidv4()}.mp4`;
+  const outputPath = path.join(getUploadDir(), outFilename);
+  const dims = await getVideoDimensions(inputPath);
+  const f = frameCrop(dims.width, dims.height, frame || {});
+  const best = quality !== 'fast';
+  const L = computeLayoutTweet({ headH: head?.height || 0, cardH: card?.height || 0, srcW: f.w, srcH: f.h, offsetY: frame?.offsetY });
+  const S = best ? 1 : 2 / 3;
+  const ev = (n) => Math.max(2, Math.round((n * S) / 2) * 2);
+  const W = ev(L.canvasW), H = ev(L.canvasH);
+  const flags = best ? 'lanczos' : 'fast_bilinear';
+  const bg = String(canvasColor || '#ffffff').replace('#', '0x');
+
+  const args = ['-y', '-threads', THREADS];
+  const ts = Number(trim?.start) || 0, te = Number(trim?.end) || 0;
+  if (ts > 0) args.push('-ss', ts.toFixed(3));
+  if (te > ts && te > 0) args.push('-t', (te - ts).toFixed(3));
+  args.push('-i', inputPath);
+  const parts = [`[0:v]${[...f.filters, `scale=${ev(L.vidW)}:${ev(L.vidH)}:flags=${flags}`, 'setsar=1', `pad=${W}:${H}:${ev(L.vidX)}:${ev(L.vidY)}:color=${bg}`].join(',')}[bg]`];
+  let last = 'bg', idx = 1;
+  const addOverlay = (img, x, y) => {
+    if (!img?.cardPath || !(img.height > 0)) return;
+    args.push('-loop', '1', '-i', img.cardPath);
+    parts.push(`[${idx}:v]scale=${ev(img.width)}:-2,format=rgba[o${idx}]`);
+    parts.push(`[${last}][o${idx}]overlay=${ev(x)}:${ev(y)}:shortest=1[t${idx}]`);
+    last = `t${idx}`; idx++;
+  };
+  addOverlay(head, L.headX, L.headY);
+  addOverlay(card, L.cardX, L.cardY);
+  parts.push(`[${last}]format=yuv420p[vout]`);
+  args.push('-filter_complex', parts.join(';'), '-map', '[vout]', '-map', '0:a?');
+  args.push('-c:v', 'libx264', '-preset', best ? BEST_PRESET : 'ultrafast', '-crf', best ? '16' : '22',
+    '-threads', THREADS, '-profile:v', 'high', '-level:v', '4.1', '-pix_fmt', 'yuv420p',
+    '-maxrate', best ? '20M' : '12M', '-bufsize', best ? '40M' : '24M',
+    '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709',
+    '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-movflags', '+faststart', outputPath);
+  await runFFmpeg(args, 'tweet');
+  const base = (process.env.PUBLIC_URL || '').replace(/\/$/, '');
+  return { path: outputPath, filename: outFilename, url: `${base}/uploads/${outFilename}` };
+}
+
 async function extractAudio(videoPath) {
   const uploadDir = getUploadDir();
   const audioPath = path.join(uploadDir, `audio_${uuidv4()}.mp3`);
@@ -753,4 +796,4 @@ function getVideoDuration(videoPath) {
   });
 }
 
-module.exports = { enhanceVideo, renderFramed, extractAudio, getVideoDuration, detectContentRect, detectMainVideoRect, extractFrames };
+module.exports = { enhanceVideo, renderFramed, renderTweet, extractAudio, getVideoDuration, detectContentRect, detectMainVideoRect, extractFrames };
