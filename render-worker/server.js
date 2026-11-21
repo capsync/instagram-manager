@@ -11,7 +11,7 @@ fs.mkdirSync(process.env.UPLOAD_DIR, { recursive: true });
 const WORK = path.resolve(process.env.UPLOAD_DIR);
 
 const logger = require('./services/logger');
-const { enhanceVideo, renderFramed } = require('./services/videoProcessor');
+const { enhanceVideo, renderFramed, renderTweet } = require('./services/videoProcessor');
 
 const SECRET = process.env.RENDER_SECRET || '';
 if (!SECRET) logger.warn('RENDER_SECRET is not set: the worker will refuse all render requests');
@@ -50,8 +50,17 @@ async function run(job, b) {
     let cardPath = null;
     if (b.cardB64) { cardPath = path.join(WORK, `card_${job.id}.png`); files.push(cardPath); fs.writeFileSync(cardPath, Buffer.from(b.cardB64, 'base64')); }
 
+    let headPath = null;
+    if (b.headB64) { headPath = path.join(WORK, `head_${job.id}.png`); files.push(headPath); fs.writeFileSync(headPath, Buffer.from(b.headB64, 'base64')); }
+
     let result;
-    if (b.kind === 'framed') {
+    if (b.kind === 'tweet') {
+      result = await renderTweet({
+        inputPath, frame: b.frame, trim: b.trim, quality: b.quality || 'best', canvasColor: b.canvasColor,
+        head: headPath ? { cardPath: headPath, width: b.head.width, height: b.head.height } : null,
+        card: cardPath ? { cardPath, width: b.card.width, height: b.card.height } : null
+      });
+    } else if (b.kind === 'framed') {
       result = await renderFramed({
         inputPath, frame: b.frame, trim: b.trim, quality: b.quality || 'best',
         card: cardPath ? { cardPath, width: b.card.width, height: b.card.height } : null
@@ -79,7 +88,7 @@ async function run(job, b) {
 app.post('/render', (req, res) => {
   if (current) return res.status(429).json({ error: 'busy' });
   const b = req.body || {};
-  if (!b.inputUrl || !['framed', 'layout'].includes(b.kind)) return res.status(400).json({ error: 'Bad request' });
+  if (!b.inputUrl || !['framed', 'layout', 'tweet'].includes(b.kind)) return res.status(400).json({ error: 'Bad request' });
   // Optional safety: only fetch videos from your own backend (set MAIN_URL to its address)
   const main = (process.env.MAIN_URL || '').replace(/\/$/, '');
   if (main && !String(b.inputUrl).startsWith(main + '/')) return res.status(400).json({ error: 'Input URL not allowed' });
