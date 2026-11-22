@@ -15,6 +15,25 @@ function getUploadDir() {
 const NICE = fs.existsSync('/usr/bin/nice') ? '/usr/bin/nice' : null;
 // x264 speed for 'best' renders. Keep 'veryfast' on a 512MB server: slower presets use more memory and crashed it. Set RENDER_PRESET=faster only on a bigger instance.
 const BEST_PRESET = ['ultrafast','superfast','veryfast','faster','fast','medium'].includes(process.env.RENDER_PRESET) ? process.env.RENDER_PRESET : 'veryfast';
+
+// ── High-quality file size: "best" renders target a bitrate that lands the file around RENDER_TARGET_MB (default 50 MB),
+// never below RENDER_MIN_MBPS (12) or above RENDER_MAX_MBPS (30) Mbps. Short clips hit the cap, long clips the floor.
+// (Instagram re-encodes every upload anyway; a richer source just loses less.)
+const TARGET_MB = Number(process.env.RENDER_TARGET_MB) || 50;
+const MIN_MBPS  = Number(process.env.RENDER_MIN_MBPS) || 12;
+const MAX_MBPS  = Number(process.env.RENDER_MAX_MBPS) || 30;
+function bestRate(durationSec) {
+  const d = Math.max(1, Number(durationSec) || 20);
+  const total = Math.min(MAX_MBPS, Math.max(MIN_MBPS, (TARGET_MB * 8) / d));
+  const v = Math.max(4, total - 0.2);   // leave room for the 192k audio
+  return ['-b:v', `${v.toFixed(1)}M`, '-maxrate', `${(v * 1.4).toFixed(1)}M`, '-bufsize', `${(v * 2.5).toFixed(1)}M`];
+}
+async function effectiveDuration(inputPath, trim, speed) {
+  const full = await getVideoDuration(inputPath);
+  const ts = Number(trim?.start) || 0, te = Number(trim?.end) || 0;
+  const len = (te > ts && te > 0 ? te : full) - ts;
+  return Math.max(1, len / (Number(speed) > 0 ? Number(speed) : 1));
+}
 const FFMPEG_TIMEOUT_MS = Number(process.env.FFMPEG_TIMEOUT_MS) || 15 * 60 * 1000;   // slow CPUs need more than 5 minutes
 
 function runFFmpeg(args, label) {
@@ -673,12 +692,14 @@ async function enhanceVideo({ inputPath, srtContent, segments, textOverlays = []
   // Quality encode (High profile, 48kHz audio) - still single-thread for Render free tier
   args.push('-c:v', 'libx264');
   args.push('-preset', layout ? (layoutQuality === 'best' ? BEST_PRESET : 'ultrafast') : 'veryfast');
-  args.push('-crf', crf);
+  const bitrateMode = !!layout && layoutQuality === 'best';
+  if (bitrateMode) args.push(...bestRate(await effectiveDuration(inputPath, trim, speed)));
+  else args.push('-crf', crf);
   args.push('-threads', THREADS);
   args.push('-profile:v', 'high', '-level:v', '4.1');
   args.push('-pix_fmt', 'yuv420p');
   if (layout) args.push(...(layoutQuality === 'best' ? ['-x264-params', 'rc-lookahead=10:ref=2'] : ['-tune', 'fastdecode', '-x264-params', 'rc-lookahead=0:bframes=0:ref=1:subme=1']));
-  args.push('-maxrate', layout && layoutQuality === 'best' ? '20M' : '12M', '-bufsize', layout && layoutQuality === 'best' ? '40M' : '24M');
+  if (!bitrateMode) args.push('-maxrate', '12M', '-bufsize', '24M');
   args.push('-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709');
   args.push('-c:a', 'aac', '-b:a', '160k', '-ar', '48000', '-movflags', '+faststart', outputPath);
 
@@ -722,9 +743,9 @@ async function renderFramed({ inputPath, frame, trim, quality = 'best', card }) 
   } else {
     args.push('-vf', `${chain},format=yuv420p`);
   }
-  args.push('-c:v', 'libx264', '-preset', best ? BEST_PRESET : 'ultrafast', '-crf', best ? '16' : '21',
+  args.push('-c:v', 'libx264', '-preset', best ? BEST_PRESET : 'ultrafast',
+    ...(best ? bestRate(await effectiveDuration(inputPath, trim)) : ['-crf', '21', '-maxrate', '10M', '-bufsize', '20M']),
     '-threads', THREADS, '-profile:v', 'high', '-level:v', '4.1', '-pix_fmt', 'yuv420p',
-    '-maxrate', best ? '20M' : '10M', '-bufsize', best ? '40M' : '20M',
     '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709',
     '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-movflags', '+faststart', outputPath);
   await runFFmpeg(args, 'framed');
@@ -765,9 +786,9 @@ async function renderTweet({ inputPath, frame, trim, quality = 'best', head, car
   addOverlay(card, L.cardX, L.cardY);
   parts.push(`[${last}]format=yuv420p[vout]`);
   args.push('-filter_complex', parts.join(';'), '-map', '[vout]', '-map', '0:a?');
-  args.push('-c:v', 'libx264', '-preset', best ? BEST_PRESET : 'ultrafast', '-crf', best ? '16' : '22',
+  args.push('-c:v', 'libx264', '-preset', best ? BEST_PRESET : 'ultrafast',
+    ...(best ? bestRate(await effectiveDuration(inputPath, trim)) : ['-crf', '22', '-maxrate', '12M', '-bufsize', '24M']),
     '-threads', THREADS, '-profile:v', 'high', '-level:v', '4.1', '-pix_fmt', 'yuv420p',
-    '-maxrate', best ? '20M' : '12M', '-bufsize', best ? '40M' : '24M',
     '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709',
     '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-movflags', '+faststart', outputPath);
   await runFFmpeg(args, 'tweet');
