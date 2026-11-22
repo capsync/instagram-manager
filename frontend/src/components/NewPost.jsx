@@ -525,8 +525,9 @@ export default function NewPost({ downloadOnly = false } = {}) {
             {layout === 'text' && <div style={{ fontSize: 11, color: '#555', marginTop: 8 }}>Just the text line above the video. No page picture, name or handle. You can still post to any page.</div>}
             {tweet && (
               <div style={{ marginTop: 10 }}>
-                <div style={{ fontSize: 11, color: '#555', marginBottom: 8 }}>The on-screen text above becomes the headline on top. The comment below goes in a tweet card under the video, shown with the selected page's saved profile (name, handle, picture).</div>
-                {!accountId && <div style={{ fontSize: 11, color: '#f0a060', marginBottom: 8 }}>Pick a page below first. Its saved profile is used on the tweet card.</div>}
+                <div style={{ fontSize: 11, color: '#555', marginBottom: 8 }}>The on-screen text above becomes the headline on top. The comment below goes in a tweet card under the video, shown with the selected page's Reaction profile (a fictional name, handle and picture you set in Accounts).</div>
+                {!accountId && <div style={{ fontSize: 11, color: '#f0a060', marginBottom: 8 }}>Pick a page below first. Its Reaction profile is used on the tweet card.</div>}
+                {!!accountId && !(accounts.find(a => a.id === accountId)?.react_name) && <div style={{ fontSize: 11, color: '#555', marginBottom: 8 }}>This page has no Reaction profile yet. A fixed fictional one is created and saved automatically the first time you render. You can change it in Accounts.</div>}
                 <textarea value={reaction} onChange={e => setReaction(e.target.value)} rows={2} placeholder="Reaction comment (tweet under the video)…"
                   style={{ ...s.textarea, fontSize: 15, background: 'transparent', border: '1px solid #2a2a4a', color: '#fff', resize: 'vertical' }} />
                 <button type="button" onClick={writeReaction} disabled={reactionBusy || !result?.postId}
