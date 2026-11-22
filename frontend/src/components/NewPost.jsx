@@ -70,6 +70,7 @@ export default function NewPost({ downloadOnly = false } = {}) {
   const [exporting, setExporting]         = useState(false);
   const [reaction, setReaction]           = useState('');   // the tweet-card comment (Reaction layout)
   const [reactionBusy, setReactionBusy]   = useState(false);
+  const [reactionTone, setReactionTone]   = useState('auto');   // auto = picked from what the video shows
   const [exported, setExported]           = useState(null);   // { url } once the processed video is ready to download
   const [error, setError]               = useState('');
   const [success, setSuccess]           = useState('');
@@ -261,7 +262,7 @@ export default function NewPost({ downloadOnly = false } = {}) {
     if (!result?.postId) return;
     setReactionBusy(true); setError('');
     try {
-      const r = await api.generateReaction(result.postId, { headline: onScreenText, caption });
+      const r = await api.generateReaction(result.postId, { headline: onScreenText, caption, tone: reactionTone });
       setReaction(r.reaction || '');
     } catch (err) {
       setError(err.message || 'Could not write the reaction. Try again.');
@@ -528,6 +529,14 @@ export default function NewPost({ downloadOnly = false } = {}) {
                 <div style={{ fontSize: 11, color: '#555', marginBottom: 8 }}>The on-screen text above becomes the headline on top. The comment below goes in a tweet card under the video, shown with the selected page's Reaction profile (a fictional name, handle and picture you set in Accounts).</div>
                 {!accountId && <div style={{ fontSize: 11, color: '#f0a060', marginBottom: 8 }}>Pick a page below first. Its Reaction profile is used on the tweet card.</div>}
                 {!!accountId && !(accounts.find(a => a.id === accountId)?.react_name) && <div style={{ fontSize: 11, color: '#555', marginBottom: 8 }}>This page has no Reaction profile yet. A fixed fictional one is created and saved automatically the first time you render. You can change it in Accounts.</div>}
+                <div style={{ fontSize: 11, color: '#555', marginBottom: 6 }}>Mood of the comment. Auto looks at the video and picks the feeling that fits.</div>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+                  {[['auto', '✨ Auto'], ['funny', '😂 Funny'], ['meme', '🧢 Meme'], ['sarcastic', '🙃 Sarcastic'], ['wholesome', '🥹 Wholesome'], ['love', '❤️ Love'], ['hype', '🔥 Hype'], ['emotional', '😭 Emotional']].map(([k, label]) => (
+                    <button key={k} type="button" onClick={() => setReactionTone(k)}
+                      style={{ padding: '7px 11px', borderRadius: 999, fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                        background: reactionTone === k ? '#6c5ce7' : '#1a1a1a', border: `1px solid ${reactionTone === k ? '#6c5ce7' : '#333'}`, color: reactionTone === k ? '#fff' : '#aaa' }}>{label}</button>
+                  ))}
+                </div>
                 <textarea value={reaction} onChange={e => setReaction(e.target.value)} rows={2} placeholder="Reaction comment (tweet under the video)…"
                   style={{ ...s.textarea, fontSize: 15, background: 'transparent', border: '1px solid #2a2a4a', color: '#fff', resize: 'vertical' }} />
                 <button type="button" onClick={writeReaction} disabled={reactionBusy || !result?.postId}
