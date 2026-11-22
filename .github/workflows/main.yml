@@ -1,0 +1,65 @@
+name: Video Processing
+
+on:
+  schedule:
+    # Every day at 06:00 UTC. Adjust as needed (minutes are billed on private repos).
+    - cron: "0 6 * * *"
+  workflow_dispatch: # manual run button for testing
+
+concurrency:
+  group: video-processing
+  cancel-in-progress: false # never overlap runs
+
+permissions:
+  contents: read
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm # caches ~/.npm keyed on package-lock.json
+
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends ffmpeg
+          ffmpeg -version | head -n 1
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Restore media cache
+        uses: actions/cache@v4
+        with:
+          path: downloads
+          key: media-${{ github.run_id }}
+          restore-keys: media-
+
+      - name: Run video processing script
+        env:
+          # Add your secrets in Repo > Settings > Secrets and variables > Actions
+          API_TOKEN: ${{ secrets.API_TOKEN }}
+          FFMPEG_PRESET: veryfast
+          FFMPEG_CRF: "23"
+        run: node scripts/process-video.js
+
+      - name: Upload output
+        uses: actions/upload-artifact@v4
+        with:
+          name: rendered-videos
+          path: output/*.mp4
+          retention-days: 2
+          if-no-files-found: warn
+
+      - name: Cleanup temp files
+        if: always()
+        run: rm -rf tmp output
