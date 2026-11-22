@@ -61,6 +61,10 @@ function setupFonts() {
   try {
     for (const w of [600, 700]) GlobalFonts.registerFromPath(require.resolve(`@fontsource/figtree/files/figtree-latin-${w}-normal.woff`), `CardFigW${w}`);
   } catch { /* falls back */ }
+  // Geist = closest free match to the tweet font (name, handle and comment)
+  try {
+    for (const w of [400, 500, 700]) GlobalFonts.registerFromPath(require.resolve(`@fontsource/geist/files/geist-latin-${w}-normal.woff`), `CardGeistW${w}`);
+  } catch { /* falls back to Inter */ }
   // Figtree = clean geometric bold, close to the headline font on theme pages (open licence, @fontsource/figtree)
   try {
     for (const w of [600, 700]) {
@@ -71,7 +75,7 @@ function setupFonts() {
   const emoji = process.env.EMOJI_FONT_PATH || findFont(['NotoColorEmoji.ttf']);
   if (emoji && fs.existsSync(emoji)) GlobalFonts.registerFromPath(emoji, 'CardEmoji');
 }
-const twStack = (px, weight) => `${px}px "CardInterW${weight}", ${INTER ? '"CardInter", ' : ''}"${SANS}", "CardEmoji", "Noto Color Emoji", sans-serif`;
+const twStack = (px, weight) => `${px}px "CardGeistW${weight}", "CardInterW${weight}", ${INTER ? '"CardInter", ' : ''}"${SANS}", "CardEmoji", "Noto Color Emoji", sans-serif`;
 const headStack = (px, weight = 700) => `${px}px "CardFigW${weight}", ${FIG ? '"CardFig", ' : ''}"CardInterW${weight}", ${INTER ? '"CardInter", ' : ''}"${SANS}", "CardEmoji", "Noto Color Emoji", sans-serif`;
 const figStack = (px, weight) => `${weight || 700} ${px}px ${FIG ? '"CardFig", ' : ''}${INTER ? '"CardInter", ' : ''}"${SANS}", "CardEmoji", "Noto Color Emoji", sans-serif`;
 // weight: true = 700, false = 400, or a number (600 = the semibold used for the main text)
@@ -340,7 +344,7 @@ async function renderTweetCard(o) {
   setupFonts();
   const { createCanvas, loadImage } = lib();
   const th = THEMES[o.theme] || THEMES.light, tt = twThemes[o.theme] || twThemes.light;
-  const W = TW_CARD_W, AV = 80, GAP = 18, NAME_PX = 29, HANDLE_PX = 26, TEXT_PX = 31, LINE = 44;
+  const W = TW_CARD_W, AV = 80, GAP = 18, NAME_PX = 29, HANDLE_PX = 26, TEXT_PX = 32, LINE = 45;
 
   const probe = createCanvas(10, 10).getContext('2d');
   probe.font = twStack(TEXT_PX, 400);
