@@ -2,13 +2,16 @@ name: Video Processing
 
 on:
   schedule:
-    # Every day at 06:00 UTC. Adjust as needed (minutes are billed on private repos).
-    - cron: "0 6 * * *"
-  workflow_dispatch: # manual run button for testing
+    - cron: "0 6 * * *" # daily 06:00 UTC
+  workflow_dispatch:
+    inputs:
+      video_url:
+        description: "Direct .mp4 link to render"
+        required: false
 
 concurrency:
   group: video-processing
-  cancel-in-progress: false # never overlap runs
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -26,7 +29,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          
+
       - name: Install FFmpeg
         run: |
           sudo apt-get update -qq
@@ -36,22 +39,17 @@ jobs:
       - name: Install dependencies
         working-directory: backend
         run: npm install --no-audit --no-fund
-        
-      - name: Restore media cache
-        uses: actions/cache@v4
-        with:
-          path: downloads
-          key: media-${{ github.run_id }}
-          restore-keys: media-
 
       - name: Run video processing script
+        working-directory: backend
         env:
-          # Add your secrets in Repo > Settings > Secrets and variables > Actions
-          API_TOKEN: ${{ secrets.API_TOKEN }}
-          FFMPEG_PRESET: veryfast
-          FFMPEG_CRF: "23"   
-         run: backend/scripts/process-video.js
-          
+          VIDEO_URL: ${{ github.event.inputs.video_url || secrets.VIDEO_URL }}
+          DOWNLOAD_DIR: ${{ github.workspace }}/downloads
+          UPLOAD_DIR: ${{ github.workspace }}/output
+          RENDER_PRESET: faster
+          FFMPEG_THREADS: "2"
+        run: node scripts/process-video.js
+
       - name: Upload output
         uses: actions/upload-artifact@v4
         with:
@@ -60,6 +58,6 @@ jobs:
           retention-days: 2
           if-no-files-found: warn
 
-      - name: Cleanup temp files
+      - name: Cleanup
         if: always()
-        run: rm -rf tmp output
+        run: rm -rf downloads output
