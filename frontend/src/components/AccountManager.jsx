@@ -3,7 +3,20 @@ import { api } from '../services/api';
 
 const STYLES = ['casual', 'professional', 'funny', 'motivational', 'minimal', 'educational'];
 const BLANK  = { name: '', ig_user_id: '', access_token: '', caption_style: 'casual', caption_prompt: '',
-                 brand_name: '', brand_handle: '', brand_verified: false, brand_avatar: '', brand_theme: 'dark' };
+                 brand_name: '', brand_handle: '', brand_verified: false, brand_avatar: '', brand_theme: 'dark',
+                 react_name: '', react_handle: '', react_verified: false, react_avatar: '' };
+
+// Quick fictional US-style profiles for the Reaction layout (names only; add your own picture)
+const GIRL_NAMES = ['Kayleigh', 'Madison', 'Brooklyn', 'Savannah', 'Kennedy', 'Harper', 'Paisley', 'Jordyn', 'Tessa', 'Maddie', 'Ainsley', 'Ryleigh', 'Hailey', 'Kinsley'];
+const BOY_NAMES  = ['Tyler', 'Colton', 'Brody', 'Hunter', 'Jaxon', 'Cody', 'Wyatt', 'Mason', 'Dalton', 'Trent', 'Austin', 'Garrett', 'Landon', 'Cole'];
+function randomProfile(kind) {
+  const list = kind === 'boy' ? BOY_NAMES : GIRL_NAMES;
+  const name = list[Math.floor(Math.random() * list.length)];
+  const n = () => Math.floor(Math.random() * 98) + 1;
+  const base = name.toLowerCase();
+  const styles = [`${base.slice(0, 4)}${n()}`, `${base}_${n()}`, `${base}${n()}${String.fromCharCode(97 + Math.floor(Math.random() * 26))}`, `its${base}${n()}`];
+  return { name, handle: styles[Math.floor(Math.random() * styles.length)] };
+}
 
 // Resize + centre-crop a chosen picture to a small square JPEG (keeps the saved data tiny)
 function fileToAvatar(file) {
@@ -75,7 +88,8 @@ export default function AccountManager() {
     setEditId(a.id);
     setForm({ name: a.name, ig_user_id: a.ig_user_id, access_token: '', caption_style: a.caption_style, caption_prompt: a.caption_prompt || '',
       brand_name: a.brand_name || '', brand_handle: a.brand_handle || '', brand_verified: !!a.brand_verified,
-      brand_avatar: a.brand_avatar || '', brand_theme: a.brand_theme || 'dark' });
+      brand_avatar: a.brand_avatar || '', brand_theme: a.brand_theme || 'dark',
+      react_name: a.react_name || '', react_handle: a.react_handle || '', react_verified: !!a.react_verified, react_avatar: a.react_avatar || '' });
     setError(''); setSuccess(''); setShowForm(true);
   }
   function cancel() { setShowForm(false); setEditId(null); setError(''); }
@@ -199,6 +213,38 @@ export default function AccountManager() {
                         style={{ ...s.stylePill, ...(form.brand_theme === t ? s.styleOn : {}) }}>{t}</button>
                     ))}
                   </div>
+                </Field>
+              </div>
+            )}
+            {editId && (
+              <div style={{ border: '1px solid #1c1c1c', borderRadius: 10, padding: 14, margin: '4px 0 18px' }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: '#ccc', marginBottom: 4 }}>Reaction profile (fictional)</div>
+                <div style={{ fontSize: 11, color: '#555', marginBottom: 14 }}>Fixed for this page and used on the tweet card of the Reaction layout instead of the page's own profile. If you leave it empty, one is created automatically the first time you use the Reaction layout. Use an invented person and a picture you have the right to use.</div>
+                <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
+                  <button type="button" style={s.stylePill} onClick={() => { const p = randomProfile('girl'); set('react_name', p.name); set('react_handle', p.handle); }}>🎲 Random girl</button>
+                  <button type="button" style={s.stylePill} onClick={() => { const p = randomProfile('boy'); set('react_name', p.name); set('react_handle', p.handle); }}>🎲 Random boy</button>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 14 }}>
+                  <div style={{ width: 64, height: 64, borderRadius: '50%', background: '#222', overflow: 'hidden', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#666', fontSize: 22, fontWeight: 700 }}>
+                    {form.react_avatar ? <img src={form.react_avatar} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : (form.react_name || '?').trim()[0]?.toUpperCase()}
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <label style={{ ...s.stylePill, cursor: 'pointer' }}>
+                      Upload picture
+                      <input type="file" accept="image/*" style={{ display: 'none' }} onChange={async e => {
+                        const f = e.target.files?.[0]; e.target.value = '';
+                        if (!f) return;
+                        try { set('react_avatar', await fileToAvatar(f)); } catch (err) { setError(err.message); }
+                      }} />
+                    </label>
+                    {form.react_avatar && <button type="button" onClick={() => set('react_avatar', '')} style={s.stylePill}>Remove</button>}
+                  </div>
+                </div>
+                <Field label="Name">
+                  <input style={s.input} value={form.react_name} onChange={e => set('react_name', e.target.value)} placeholder="Kayleigh" />
+                </Field>
+                <Field label="Handle">
+                  <input style={s.input} value={form.react_handle} onChange={e => set('react_handle', e.target.value.replace(/^@+/, ''))} placeholder="kayleigh22" />
                 </Field>
               </div>
             )}
