@@ -598,20 +598,112 @@ async function generateSubtitleLines({ transcript, segments }) {
   return segments || [];
 }
 
-const REACTION_PROMPT = `You write ONE short reaction tweet from an ordinary fan who just watched this clip. It is shown in a tweet-style card under the video.
-VOICE: natural, casual, specific, like a real person typing fast. Not an ad, not a caption, not a headline.
-VALUE: point at ONE specific thing that makes the clip land (a detail, a comparison, a moment, a sound, a skill) so the line tells viewers what to notice.
-RULES:
-- 1-2 sentences, under 180 characters.
-- Use only facts that appear in the context below. Invent no stats, dates, quotes or claims.
-- Do not put words in the mouth of any real named person and do not quote anyone.
-- No hashtags, no @mentions, no links.
-- At most one emoji, only if it fits. At most one ALL-CAPS word for emphasis.
-- Never say "the clip", "this video", or mention AI.
-- Pure US English.
-Output only the tweet text, nothing else.`;
+// ── Reaction tweet writer ─────────────────────────────────────────────────────────────────────────────────────────
+// Looks at a few frames of the video (Gemini vision; text-only fallback), drafts 8 candidates in the wanted tone
+// (or a mix chosen from what the visuals show), then keeps the most natural, topic-specific one.
+const REACTION_TONES = {
+  funny:     'FUNNY: a real joke or playful exaggeration about what is visible.',
+  meme:      'MEME: internet meme voice built around what is visible ("nobody: / him:", "me watching this like...", "pov:", "no thoughts head empty", "bro is NOT the same species", "final boss of ...").',
+  sarcastic: 'SARCASTIC: dry, deadpan and playful about the SITUATION. Never mock anyone\'s looks, body, identity, or a real person\'s misfortune.',
+  wholesome: 'WHOLESOME: warm, soft, kind; point at the sweet detail you can see.',
+  love:      'LOVE: swoony or romantic ("i\'m in love", heart-eyes energy, playful "marry me" jokes are fine).',
+  hype:      'HYPE: loud excited energy, caps on one word, like someone yelling at the screen.',
+  emotional: 'EMOTIONAL: a moved, lump-in-the-throat reaction to one specific moment you can see.'
+};
+const REACTION_TONE_KEYS = Object.keys(REACTION_TONES);
 
-async function generateReaction({ headline = '', caption = '', transcript = '', originalCaption = '', tweak = '' } = {}) {
+function buildReactionPrompt(tone, hasImages) {
+  const toneBlock = REACTION_TONES[tone]
+    ? `TONE FOR ALL 8: ${REACTION_TONES[tone]}`
+    : `TONE: decide the dominant feeling of the clip from ${hasImages ? 'what you SEE' : 'the context'}, then write 8 candidates that mix at least 4 different tones from this list:\n${REACTION_TONE_KEYS.map(k => '- ' + REACTION_TONES[k]).join('\n')}\nSet "emotion" to the single tone that fits this clip best.`;
+  return `You ghost-write tweets for a REAL-feeling fan who just watched this post. The tweet appears under the video, so it must read like an actual person typed it on their phone mid-scroll. Never like a caption, a review, or marketing.
+
+${hasImages ? 'LOOK at the frames first: who or what is shown, what they are doing, the setting, expressions, outfit, objects, animals, any text on screen. Every tweet must react to something VISIBLE or clearly stated in the context (a detail a viewer would actually notice), never a generic compliment.' : 'React to something specific in the context, never a generic compliment.'}
+Write like someone who actually follows THAT world and uses its everyday words. Refer to the subject the way people do: first name, a nickname, "this man", "she", "bro", "the dog".
+
+${toneBlock}
+
+HOW REAL PEOPLE WRITE:
+- punchy, about 4-16 words, ONE thought, concrete and about THIS clip
+- usually lowercase start, fragments allowed, trailing period optional, no essay sentences
+- ALL-CAPS on exactly ONE word for emphasis in most of them
+- at most ONE emoji, only if natural, always last (😭 💀 🔥 🥹 😮‍💨 🫠 🤣 🥰 🫶)
+- at most one slang word (ngl, fr, lowkey, istg, bro). Do not force it.
+- no hashtags, no @mentions, no links, no quotation marks
+
+VIBE EXAMPLES from other clips. NEVER copy them:
+he sounds EXACTLY like john anderson. 😭
+nah she did NOT just hit that note live 💀
+nobody: / the dog: i have decided this is my couch now
+okay but the way he looks at her at 0:08 is actually illegal 🥹
+oh no, a grown man being this good at cooking. how tragic
+this is the sweetest thing i've seen all week fr 🥹
+bro read the whole room and still got it
+
+NEVER WRITE: "amazing", "so talented", "love this", "masterpiece", "goosebumps", "chills", "vibes", "iconic", "absolute", "legend", "incredible", "stunning", "this hits", "needs more attention", or anything that sounds like a review. Do not reuse the headline's wording.
+
+SAFETY: no insults about anyone's body, looks, race, religion, gender, sexuality or disability. No sexual content. Use only facts present in the context or visible in the frames; invent no stats, dates or quotes; never put words in a real person's mouth. Pure US English.
+
+OUTPUT: JSON only, exactly this shape: {"emotion":"<one of: ${REACTION_TONE_KEYS.join(', ')}>","tweets":[{"tone":"<tone>","text":"<tweet>"}]} with exactly 8 tweets.`;
+}
+
+const REACTION_BANNED = /\b(amazing|talented|talent|masterpiece|goosebumps|chills|vibes?|iconic|absolute(ly)?|legend|incredible|stunning|perfection)\b|the way (he|she|they|you) (sings?|plays?|moves?|performs?)|this hits|love this|needs more|so good/i;
+const REACTION_STOP = new Set('this that with from have were will your they them what when then than into over just like about after before while there their would could should been being also more most very much some such only even still make made does done here where which these those'.split(' '));
+
+function cleanReaction(raw) {
+  let t = String(raw || '').trim();
+  t = t.replace(/^\s*(?:\d+[\).:-]|[-*•])\s*/, '').replace(/^["'“”\s]+|["'“”\s]+$/g, '').replace(/^(tweet|reaction)\s*:\s*/i, '');
+  t = t.replace(/#\w+/g, '').replace(/@\w+/g, '').replace(/\s{2,}/g, ' ').trim();
+  return limitToOneEmoji(t);
+}
+
+function scoreReaction(t, ctxWords, headline) {
+  if (!t) return -99;
+  const plain = t.replace(/[^\p{L}\p{N}\s'’]/gu, ' ');
+  const words = plain.split(/\s+/).filter(Boolean);
+  if (words.length < 3 || t.length < 14 || t.length > 150) return -99;
+  if (REACTION_BANNED.test(t)) return -99;
+  let sc = 0;
+  const caps = words.filter(w => w.length >= 3 && w.length <= 14 && w === w.toUpperCase() && /[A-Z]/.test(w));
+  if (caps.length === 1) sc += 2; else if (caps.length > 1) sc -= 1;
+  if (/^[a-z]/.test(t)) sc += 1;
+  if (words.length >= 4 && words.length <= 16) sc += 1; else sc -= 1;
+  if (words.some(w => ctxWords.has(w.toLowerCase().replace(/['’]s$/, '')))) sc += 1.5;   // talks about THIS clip
+  if (/(!{2,}|\?{2,})/.test(t)) sc -= 1;
+  const hw = String(headline || '').toLowerCase().split(/\s+/).filter(Boolean);
+  const tl = t.toLowerCase();
+  for (let i = 0; i + 3 < hw.length; i++) if (tl.includes(hw.slice(i, i + 4).join(' '))) { sc -= 3; break; }   // don't echo the headline
+  if (!/[.!?]$/.test(t) || /\p{Extended_Pictographic}$/u.test(t)) sc += 0.5;
+  return sc + Math.random() * 0.8;
+}
+
+// candidates: strings or { tone, text }. emotion = the tone the model judged best for this clip (auto mode gets a small bonus).
+function pickReaction(candidates, { headline = '', caption = '', transcript = '', originalCaption = '', emotion = '' } = {}) {
+  const ctxWords = new Set(
+    `${headline} ${caption} ${originalCaption} ${transcript}`.toLowerCase().match(/[a-z][a-z'’]{3,}/g)?.filter(w => !REACTION_STOP.has(w)).map(w => w.replace(/['’]s$/, '')) || []
+  );
+  const scored = (candidates || []).map(c => (typeof c === 'string' ? { tone: '', text: c } : { tone: String(c?.tone || '').toLowerCase(), text: c?.text }))
+    .map(c => ({ ...c, t: cleanReaction(c.text) })).filter(c => c.t)
+    .map(c => ({ t: c.t, s: scoreReaction(c.t, ctxWords, headline) + (emotion && c.tone === emotion ? 1 : 0) }))
+    .sort((a, b) => b.s - a.s);
+  return scored.length && scored[0].s > -50 ? scored[0].t : '';
+}
+
+function parseReactionJson(raw) {
+  const txt = String(raw || '');
+  try {
+    const obj = JSON.parse((txt.match(/\{[\s\S]*\}/) || [txt])[0]);
+    if (Array.isArray(obj?.tweets)) return { emotion: String(obj.emotion || '').toLowerCase(), list: obj.tweets };
+  } catch { /* try array */ }
+  try {
+    const arr = JSON.parse((txt.match(/\[[\s\S]*\]/) || [txt])[0]);
+    if (Array.isArray(arr)) return { emotion: '', list: arr };
+  } catch { /* lines */ }
+  return { emotion: '', list: txt.split('\n') };
+}
+
+async function generateReaction({ headline = '', caption = '', transcript = '', originalCaption = '', tweak = '', tone = 'auto', videoPath = '' } = {}) {
+  const tn = REACTION_TONES[String(tone || '').toLowerCase()] ? String(tone).toLowerCase() : 'auto';
   const context = [
     headline        && `Headline shown above the video: ${headline}`,
     caption         && `Caption written for the post: ${String(caption).substring(0, 1500)}`,
@@ -619,22 +711,41 @@ async function generateReaction({ headline = '', caption = '', transcript = '', 
     transcript      && `Audio transcript: ${String(transcript).substring(0, 1200)}`,
     tweak           && `Extra direction from the page owner: ${String(tweak).substring(0, 300)}`
   ].filter(Boolean).join('\n\n');
-  if (!context) throw new Error('Nothing to base the reaction on yet.');
-  const completion = await getGroq().chat.completions.create({
-    model: 'openai/gpt-oss-120b',
-    messages: [
-      { role: 'system', content: REACTION_PROMPT },
-      { role: 'user', content: `${context}\n\nWrite the reaction tweet now:` }
-    ],
-    max_tokens: 1500,
-    temperature: 0.9
-  });
-  let t = String(completion.choices?.[0]?.message?.content || '').trim();
-  t = t.replace(/^["'“”\s]+|["'“”\s]+$/g, '').replace(/^(tweet|reaction)\s*:\s*/i, '').replace(/#\w+/g, '').replace(/@\w+/g, '').replace(/\s{2,}/g, ' ').trim();
-  t = limitToOneEmoji(t);
-  if (t.length > 220) t = t.slice(0, 220).replace(/\s+\S*$/, '') + '…';
-  if (!t) throw new Error('The reaction came back empty. Try again.');
-  return t;
+
+  let frames = [];
+  if (videoPath && process.env.GEMINI_API_KEY) {
+    try { frames = await require('./videoProcessor').extractFrames(videoPath, 4); } catch (e) { logger.warn('Reaction: could not read frames: ' + e.message); }
+  }
+  if (!context && !frames.length) throw new Error('Nothing to base the reaction on yet.');
+
+  let raw = '';
+  if (frames.length) {
+    try {
+      const { ai } = getGemini();
+      const model = ai.getGenerativeModel({ model: process.env.GEMINI_MODEL || 'gemini-2.5-flash', generationConfig: { responseMimeType: 'application/json', temperature: 1.0 } });
+      const result = await model.generateContent([
+        ...frames.map(data => ({ inlineData: { mimeType: 'image/jpeg', data } })),
+        { text: `The images above are ${frames.length} frames taken in order from the video.\n\n${buildReactionPrompt(tn, true)}\n\n${context || '(no extra text context)'}\n\nReturn the JSON now.` }
+      ]);
+      raw = result.response.text();
+    } catch (e) { logger.warn('Reaction (vision) failed, using text only: ' + e.message); }
+  }
+  if (!raw) {
+    const completion = await getGroq().chat.completions.create({
+      model: 'openai/gpt-oss-120b',
+      messages: [
+        { role: 'system', content: buildReactionPrompt(tn, false) },
+        { role: 'user', content: `${context}\n\nReturn the JSON now.` }
+      ],
+      max_tokens: 2500,
+      temperature: 1.0
+    });
+    raw = String(completion.choices?.[0]?.message?.content || '');
+  }
+  const { emotion, list } = parseReactionJson(raw);
+  const best = pickReaction(list, { headline, caption, transcript, originalCaption, emotion: tn === 'auto' ? emotion : tn });
+  if (!best) throw new Error('Could not write a good reaction. Try again.');
+  return best;
 }
 
-module.exports = { generateReaction, generateContent, generateCaption, generateSubtitleLines, sanitizeOptions, parseBrief };
+module.exports = { generateReaction, pickReaction, generateContent, generateCaption, generateSubtitleLines, sanitizeOptions, parseBrief };
