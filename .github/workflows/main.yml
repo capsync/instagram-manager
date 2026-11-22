@@ -49,9 +49,9 @@ jobs:
           # Add your secrets in Repo > Settings > Secrets and variables > Actions
           API_TOKEN: ${{ secrets.API_TOKEN }}
           FFMPEG_PRESET: veryfast
-          FFMPEG_CRF: "23"
-        run: node scripts/process-video.js
-
+          FFMPEG_CRF: "23"   
+         run: backend/scripts/process-video.js
+          
       - name: Upload output
         uses: actions/upload-artifact@v4
         with:
