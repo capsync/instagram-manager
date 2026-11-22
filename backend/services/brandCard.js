@@ -29,6 +29,7 @@ function findFont(names) {
 let fontsReady = false;
 let SANS = 'sans-serif';
 let INTER = false;
+let FIG = false;
 function setupFonts() {
   if (fontsReady) return;
   fontsReady = true;
@@ -53,9 +54,26 @@ function setupFonts() {
     }
     INTER = true;
   } catch { INTER = false; }
+  // One font name per weight: the tweet/headline pieces need a true 400 (regular) and a true 700 (bold)
+  try {
+    for (const w of [400, 600, 700]) GlobalFonts.registerFromPath(require.resolve(`@fontsource/inter/files/inter-latin-${w}-normal.woff`), `CardInterW${w}`);
+  } catch { /* falls back to the shared family */ }
+  try {
+    for (const w of [600, 700]) GlobalFonts.registerFromPath(require.resolve(`@fontsource/figtree/files/figtree-latin-${w}-normal.woff`), `CardFigW${w}`);
+  } catch { /* falls back */ }
+  // Figtree = clean geometric bold, close to the headline font on theme pages (open licence, @fontsource/figtree)
+  try {
+    for (const w of [600, 700]) {
+      GlobalFonts.registerFromPath(require.resolve(`@fontsource/figtree/files/figtree-latin-${w}-normal.woff`), 'CardFig');
+    }
+    FIG = true;
+  } catch { FIG = false; }
   const emoji = process.env.EMOJI_FONT_PATH || findFont(['NotoColorEmoji.ttf']);
   if (emoji && fs.existsSync(emoji)) GlobalFonts.registerFromPath(emoji, 'CardEmoji');
 }
+const twStack = (px, weight) => `${px}px "CardInterW${weight}", ${INTER ? '"CardInter", ' : ''}"${SANS}", "CardEmoji", "Noto Color Emoji", sans-serif`;
+const headStack = (px, weight = 700) => `${px}px "CardFigW${weight}", ${FIG ? '"CardFig", ' : ''}"CardInterW${weight}", ${INTER ? '"CardInter", ' : ''}"${SANS}", "CardEmoji", "Noto Color Emoji", sans-serif`;
+const figStack = (px, weight) => `${weight || 700} ${px}px ${FIG ? '"CardFig", ' : ''}${INTER ? '"CardInter", ' : ''}"${SANS}", "CardEmoji", "Noto Color Emoji", sans-serif`;
 // weight: true = 700, false = 400, or a number (600 = the semibold used for the main text)
 const fontStack = (px, weight) => `${weight === true ? 700 : (weight || 400)} ${px}px ${INTER ? '"CardInter", ' : ''}"${SANS}", "CardEmoji", "Noto Color Emoji", sans-serif`;
 
@@ -285,15 +303,110 @@ function computeLayout({ cardH, srcW, srcH, offsetY = 0 }) {
   };
 }
 
+// ── "Reaction" layout pieces (exact tweet look) ───────────────────────────────────────────────────────────────
+const TW_HEAD_X = 76, TW_HEAD_W = CANVAS_W - 2 * TW_HEAD_X;   // headline: 76px side margins
+const TW_CARD_X = 150, TW_CARD_W = 780;                        // tweet card sits inset under the full-width video
+const twThemes = {
+  light: { name: '#0f1419', handle: '#536471', text: '#0f1419', icon: '#536471' },
+  dark:  { name: '#e7e9ea', handle: '#71767b', text: '#e7e9ea', icon: '#71767b' }
+};
+
+/** Headline above the video: bold geometric sans, left aligned. */
+async function renderHeadlineCard({ text, theme = 'light', scale = 1 }) {
+  setupFonts();
+  const { createCanvas } = lib();
+  const th = THEMES[theme] || THEMES.light;
+  const k = Math.min(1.4, Math.max(0.8, Number(scale) || 1));
+  const PX = Math.round(44 * k), LINE = Math.round(53 * k);
+  const t = String(text || '').trim();
+  if (!t) return { buffer: createCanvas(TW_HEAD_W, 2).toBuffer('image/png'), width: TW_HEAD_W, height: 0, canvasColor: th.canvas };
+  const probe = createCanvas(10, 10).getContext('2d');
+  probe.font = headStack(PX, 700);
+  let lines = wrapText(probe, t, TW_HEAD_W);
+  if (lines.length > 4) { lines = lines.slice(0, 4); lines[3] = lines[3].replace(/\s*\S{0,3}$/, '') + '…'; }
+  const h = lines.length * LINE + 8;
+  const canvas = createCanvas(TW_HEAD_W, h);
+  const ctx = canvas.getContext('2d');
+  ctx.font = headStack(PX, 700); ctx.fillStyle = th.text; ctx.textBaseline = 'alphabetic';
+  lines.forEach((ln, i) => ctx.fillText(ln, 0, Math.round(PX * 0.92) + i * LINE));
+  return { buffer: canvas.toBuffer('image/png'), width: TW_HEAD_W, height: h, canvasColor: th.canvas };
+}
+
+const tweetCardCache = new Map();
+/** A real-looking tweet: avatar, name, @handle, the small "no" icon + "…" on the right, then the text (regular weight). */
+async function renderTweetCard(o) {
+  const key = sha(['tw', o.name, o.handle, o.verified ? 1 : 0, o.avatar || '', o.theme || 'light', o.text || ''].join('|'));
+  if (tweetCardCache.has(key)) return tweetCardCache.get(key);
+  setupFonts();
+  const { createCanvas, loadImage } = lib();
+  const th = THEMES[o.theme] || THEMES.light, tt = twThemes[o.theme] || twThemes.light;
+  const W = TW_CARD_W, AV = 80, GAP = 18, NAME_PX = 29, HANDLE_PX = 26, TEXT_PX = 31, LINE = 44;
+
+  const probe = createCanvas(10, 10).getContext('2d');
+  probe.font = twStack(TEXT_PX, 400);
+  let lines = wrapText(probe, String(o.text || '').trim(), W);
+  if (lines.length > 5) { lines = lines.slice(0, 5); lines[4] = lines[4].replace(/\s*\S{0,3}$/, '') + '…'; }
+  const textTop = AV + 26;
+  const height = textTop + lines.length * LINE + 10;
+  const canvas = createCanvas(W, height);
+  const ctx = canvas.getContext('2d');
+
+  // avatar
+  ctx.save();
+  ctx.beginPath(); ctx.arc(AV / 2, AV / 2, AV / 2, 0, Math.PI * 2); ctx.closePath(); ctx.clip();
+  let drew = false;
+  if (o.avatar) {
+    try {
+      const img = await loadImage(Buffer.from(String(o.avatar).replace(/^data:image\/\w+;base64,/, ''), 'base64'));
+      const sc = Math.max(AV / img.width, AV / img.height);
+      ctx.drawImage(img, (AV - img.width * sc) / 2, (AV - img.height * sc) / 2, img.width * sc, img.height * sc);
+      drew = true;
+    } catch { /* initial below */ }
+  }
+  if (!drew) {
+    ctx.fillStyle = th.avatarBg; ctx.fillRect(0, 0, AV, AV);
+    ctx.fillStyle = tt.name; ctx.font = twStack(36, 700); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText((String(o.name || o.handle || '?').trim()[0] || '?').toUpperCase(), AV / 2, AV / 2 + 2);
+  }
+  ctx.restore();
+
+  // name + handle
+  const tx = AV + GAP;
+  ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+  ctx.font = twStack(NAME_PX, 700); ctx.fillStyle = tt.name;
+  let nameStr = String(o.name || '').trim();
+  const maxNameW = W - tx - 150 - (o.verified ? 32 : 0);
+  while (nameStr.length > 1 && ctx.measureText(nameStr).width > maxNameW) nameStr = nameStr.slice(0, -1);
+  ctx.fillText(nameStr, tx, 34);
+  if (o.verified) drawVerifiedBadge(ctx, tx + ctx.measureText(nameStr).width + 9 + 15, 34 - 10, 30);
+  ctx.font = twStack(HANDLE_PX, 400); ctx.fillStyle = tt.handle;
+  ctx.fillText(`@${String(o.handle || '').replace(/^@+/, '')}`, tx, 68);
+
+  // right side icons: "no" circle + three dots
+  const cy = 25;
+  ctx.strokeStyle = tt.icon; ctx.lineWidth = 2.8; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.arc(W - 106, cy, 10.5, 0, Math.PI * 2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(W - 106 - 16, cy + 16); ctx.lineTo(W - 106 + 16, cy - 16); ctx.stroke();
+  ctx.fillStyle = tt.icon;
+  for (const dx of [52, 40, 28]) { ctx.beginPath(); ctx.arc(W - dx, cy, 3, 0, Math.PI * 2); ctx.fill(); }
+
+  // text: regular weight, like a real tweet
+  ctx.font = twStack(TEXT_PX, 400); ctx.fillStyle = tt.text;
+  lines.forEach((ln, i) => ctx.fillText(ln, 0, textTop + Math.round(TEXT_PX * 0.92) + i * LINE));
+
+  const out = { buffer: canvas.toBuffer('image/png'), width: W, height, canvasColor: th.canvas };
+  return remember(tweetCardCache, key, out, 60);
+}
+
 /**
- * "Reaction" layout: headline on top, video in the middle, tweet card under the video.
- * The whole group is centred vertically; offsetY (px, + = lower) moves it. A zero height means that part is absent.
+ * "Reaction" layout: headline on top, FULL-WIDTH video in the middle, tweet card under it (all left-aligned like the
+ * theme pages). Centred vertically as a group; offsetY (px, + = lower) moves it. Zero height = that part is absent.
  */
 function computeLayoutTweet({ headH = 0, cardH = 0, srcW, srcH, offsetY = 0 }) {
-  const SAFE_TOP = 110, SAFE_BOTTOM = 170, GAP = 28;
-  const gH = headH > 0 ? GAP : 0, gC = cardH > 0 ? GAP : 0;
+  const SAFE_TOP = 110, SAFE_BOTTOM = 170, GH = 16, GC = 22;
+  const gH = headH > 0 ? GH : 0, gC = cardH > 0 ? GC : 0;
   const availH = CANVAS_H - SAFE_TOP - SAFE_BOTTOM - headH - cardH - gH - gC;
-  const s = Math.min(CONTENT_W / srcW, availH / srcH);
+  const s = Math.min(CANVAS_W / srcW, availH / srcH);
   const even = (n) => Math.max(2, Math.round(n / 2) * 2);
   const vidW = even(srcW * s), vidH = even(srcH * s);
   const groupH = headH + gH + vidH + gC + cardH;
@@ -302,12 +415,12 @@ function computeLayoutTweet({ headH = 0, cardH = 0, srcW, srcH, offsetY = 0 }) {
   const vidY = top + headH + gH;
   return {
     canvasW: CANVAS_W, canvasH: CANVAS_H,
-    headX: MARGIN, headY: top,
-    vidW, vidH, vidX: MARGIN + Math.round((CONTENT_W - vidW) / 2), vidY,
-    cardX: MARGIN, cardY: vidY + vidH + gC
+    headX: TW_HEAD_X, headY: top,
+    vidW, vidH, vidX: Math.round((CANVAS_W - vidW) / 2), vidY,
+    cardX: TW_CARD_X, cardY: vidY + vidH + gC
   };
 }
 
 function canvasColorFor(theme) { return (THEMES[theme] || THEMES.dark).canvas; }
 
-module.exports = { renderCard, computeLayout, computeLayoutTweet, canvasColorFor, CANVAS_W, CANVAS_H, CARD_W, MARGIN };
+module.exports = { renderCard, renderHeadlineCard, renderTweetCard, computeLayout, computeLayoutTweet, canvasColorFor, CANVAS_W, CANVAS_H, CARD_W, MARGIN };
