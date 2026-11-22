@@ -9,7 +9,7 @@ const { transcribeVideo, segmentsToSRT } = require('../services/transcription');
 const { generateContent, generateSubtitleLines, generateReaction } = require('../services/captionGenerator');
 const { enhanceVideo, renderFramed, renderTweet, detectContentRect } = require('../services/videoProcessor');
 const remoteRender = require('../services/remoteRender');
-const { renderCard } = require('../services/brandCard');
+const { renderCard, renderHeadlineCard, renderTweetCard } = require('../services/brandCard');
 const { assessClip, extractCredit } = require('../services/contentGuard');
 const logger = require('../services/logger');
 
@@ -322,15 +322,35 @@ router.post('/enhance/:postId', heavy(async (req, res, next) => {
     if (tweetMode) {
       const reaction = String(brandCard.text || '').trim();
       if (!reaction) return res.status(400).json({ error: 'Write the reaction comment first. It goes in the tweet card under the video.' });
-      const frame = { ...(brandCard.frame || {}), cardScale: (brandCard.frame && brandCard.frame.cardScale) || 0.9 };
-      const built = await buildBrandCard(req, account_id || post.account_id, reaction, path.dirname(inputPath), frame, 'card', brandCard.quality, brandCard.theme || 'light');
-      if (built.error) return res.status(built.status).json({ error: built.error });
-      tweetCard = { cardPath: built.brand.cardPath, width: built.card.width, height: built.card.height };
-      tweetCanvas = built.card.canvasColor;
+      const acct = (account_id || post.account_id) ? await getDB().get('SELECT * FROM accounts WHERE id=$1', [account_id || post.account_id]) : null;
+      if (!acct) return res.status(400).json({ error: 'Pick a page first. Its reaction profile is used on the tweet card.' });
+      const uid = req.headers['x-user-id'];
+      if (uid && acct.user_id && acct.user_id !== uid) return res.status(403).json({ error: 'Not your page.' });
+      // No reaction profile yet: give this page its own FIXED fictional one (saved, so it never changes unless you edit it)
+      if (!String(acct.react_name || '').trim() || !String(acct.react_handle || '').trim()) {
+        const girls = ['Kayleigh', 'Madison', 'Brooklyn', 'Savannah', 'Kennedy', 'Harper', 'Paisley', 'Jordyn', 'Tessa', 'Maddie', 'Ainsley', 'Ryleigh', 'Hailey', 'Kinsley'];
+        const boys  = ['Tyler', 'Colton', 'Brody', 'Hunter', 'Jaxon', 'Cody', 'Wyatt', 'Mason', 'Dalton', 'Trent', 'Austin', 'Garrett', 'Landon', 'Cole'];
+        const used = new Set((await getDB().all('SELECT react_name FROM accounts WHERE react_name IS NOT NULL')).map(r => String(r.react_name).toLowerCase()));
+        const pool = [...girls, ...boys].filter(n => !used.has(n.toLowerCase()));
+        const list = pool.length ? pool : [...girls, ...boys];
+        const nm = list[Math.floor(Math.random() * list.length)];
+        const n = () => Math.floor(Math.random() * 98) + 1;
+        const base = nm.toLowerCase();
+        const handles = [`${base.slice(0, 4)}${n()}`, `${base}_${n()}`, `its${base}${n()}`, `${base}${n()}${String.fromCharCode(97 + Math.floor(Math.random() * 26))}`];
+        acct.react_name = nm; acct.react_handle = handles[Math.floor(Math.random() * handles.length)];
+        await getDB().run('UPDATE accounts SET react_name=$1, react_handle=$2 WHERE id=$3', [acct.react_name, acct.react_handle, acct.id]);
+      }
+      const theme = (brandCard.theme === 'dark' || brandCard.theme === 'light') ? brandCard.theme : 'light';
+      const cardImg = await renderTweetCard({ name: acct.react_name, handle: acct.react_handle, verified: !!acct.react_verified, avatar: acct.react_avatar, text: reaction, theme });
+      const sha1 = (buf) => require('crypto').createHash('sha1').update(buf).digest('hex').slice(0, 20);
+      const cp = path.join(path.dirname(inputPath), `tweet_${sha1(cardImg.buffer)}.png`);
+      if (!fs.existsSync(cp)) fs.writeFileSync(cp, cardImg.buffer);
+      tweetCard = { cardPath: cp, width: cardImg.width, height: cardImg.height };
+      tweetCanvas = cardImg.canvasColor;
       const headline = String(brandCard.headline || '').trim();
       if (headline) {
-        const h = await renderCard({ plain: true, text: headline, theme: brandCard.theme || 'light' });
-        const hp = path.join(path.dirname(inputPath), `head_${require('crypto').createHash('sha1').update(h.buffer).digest('hex').slice(0, 20)}.png`);
+        const h = await renderHeadlineCard({ text: headline, theme });
+        const hp = path.join(path.dirname(inputPath), `head_${sha1(h.buffer)}.png`);
         if (!fs.existsSync(hp)) fs.writeFileSync(hp, h.buffer);
         tweetHead = { cardPath: hp, width: h.width, height: h.height };
       }
