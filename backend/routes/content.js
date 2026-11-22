@@ -435,13 +435,14 @@ router.post('/reaction/:postId', async (req, res, next) => {
   try {
     const post = await getDB().get('SELECT * FROM posts WHERE id=$1', [req.params.postId]);
     if (!post) return res.status(404).json({ error: 'Post not found' });
-    const { headline = '', caption = '', tweak = '' } = req.body || {};
+    const { headline = '', caption = '', tweak = '', tone = 'auto' } = req.body || {};
+    const vp = post.local_video_path && require('fs').existsSync(post.local_video_path) ? post.local_video_path : '';
     const reaction = await generateReaction({
       headline,
       caption: caption || post.generated_caption || '',
       transcript: srtToText(post.subtitles_srt),
       originalCaption: post.original_caption || '',
-      tweak
+      tweak, tone, videoPath: vp
     });
     res.json({ postId: post.id, reaction });
   } catch (err) { next(err); }
