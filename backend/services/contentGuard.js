@@ -11,6 +11,11 @@
 const { execFile } = require('child_process');
 const logger = require('./logger');
 
+// GUARD_MODE (env): 'coachella' (default) = ONLY Coachella clips are blocked, everything else passes.
+//                   'full' = the old strict checks (labels, broadcasters, leagues, studios, official uploads, ...).
+const GUARD_MODE = String(process.env.GUARD_MODE || 'coachella').toLowerCase() === 'full' ? 'full' : 'coachella';
+const COACHELLA_RE = /coachella/i;   // also catches #coachella and coachella2025
+
 const BLOCK_AT = 30;   // 30+ = risky = never posts (no review tier)
 const REVIEW_AT = 30;
 
@@ -177,9 +182,40 @@ function build(hits, credit) {
   return { level: levelFor(score), score, reasons, credit: credit || null };
 }
 
+// Coachella-only check: source text, link and words heard in the audio, plus a quick look at a few frames for Coachella branding.
+async function coachellaVision(videoPath) {
+  if (!videoPath || !process.env.GEMINI_API_KEY) return [];
+  try {
+    const { extractFrames } = require('./videoProcessor');
+    const all = await extractFrames(videoPath, 6);
+    const frames = all.length > 4 ? [0, 1, 3, 5].map(i => all[i]).filter(Boolean) : all;
+    if (!frames.length) return [];
+    const { GoogleGenerativeAI } = require('@google/generative-ai');
+    const model = new GoogleGenerativeAI(process.env.GEMINI_API_KEY).getGenerativeModel({ model: process.env.GEMINI_MODEL || 'gemini-2.5-flash' });
+    const r = await model.generateContent([
+      ...frames.map(data => ({ inlineData: { mimeType: 'image/jpeg', data } })),
+      { text: 'These are frames from one video. Is the Coachella festival clearly identifiable (a Coachella logo, stage signage, banner, or on-screen text that reads Coachella)? Report ONLY what is clearly visible. Return ONLY JSON: {"coachella_visible":false}' }
+    ]);
+    const m = r.response.text().replace(/```json|```/g, '').match(/\{[\s\S]*\}/);
+    if (m && JSON.parse(m[0]).coachella_visible === true) return [{ points: 100, why: 'Coachella branding visible in the video', coachella: true }];
+  } catch (e) { logger.warn('Coachella vision check skipped: ' + e.message); }
+  return [];
+}
+
+function coachellaTextHits(meta = {}, fileTags = '', url = '', transcript = '') {
+  const text = [meta.title, meta.description, meta.uploader, meta.channel, meta.track, meta.artist, (meta.tags || []).join(' '), fileTags, url, transcript].filter(Boolean).join('\n');
+  return COACHELLA_RE.test(text) ? [{ points: 100, why: 'Coachella content', coachella: true }] : [];
+}
+
 /** Main entry. Never throws: a failed check returns 'clear' with a note rather than stopping posts. */
 async function assessClip({ videoPath, meta = {}, url = '', isRepost = false, credit = null, transcript = '' }) {
   try {
+    if (GUARD_MODE === 'coachella') {
+      const fileTags = await probeTags(videoPath);
+      const textHits = coachellaTextHits(meta, fileTags, url, transcript);
+      const hits = textHits.length ? textHits : await coachellaVision(videoPath);   // skip the frame check when the text already says Coachella
+      return build(hits, credit);
+    }
     const [fileTags, vision, label] = await Promise.all([probeTags(videoPath), visionSignals(videoPath), labelSignals(meta, transcript)]);
     const hits = [...metadataSignals(meta, fileTags), ...vision, ...label];
     return build(hits, credit);
@@ -206,8 +242,10 @@ function parseReasons(row) {
 function gateDecision(row, body = {}) {
   const level = row?.guard_level;
   if (!level || level === 'clear') return null;
+  // Coachella-only mode: older posts that were held for other reasons (labels, broadcasters, ...) are allowed now
+  if (GUARD_MODE === 'coachella' && !parseReasons(row).some(r => COACHELLA_RE.test(r))) return null;
   const why = parseReasons(row).join('; ') || 'risk detected';
   return { status: 422, error: `Blocked by the safety check: ${why}` };   // any non-clear result (incl. old 'review' rows) does not post
 }
 
-module.exports = { assessClip, labelSignals, LABEL_TERMS, extractCredit, addReason, gateDecision, metadataSignals, build, levelFor, HARD_TERMS, MEDIUM_TERMS, BLOCK_AT, REVIEW_AT };
+module.exports = { GUARD_MODE, assessClip, labelSignals, LABEL_TERMS, extractCredit, addReason, gateDecision, metadataSignals, build, levelFor, HARD_TERMS, MEDIUM_TERMS, BLOCK_AT, REVIEW_AT };
