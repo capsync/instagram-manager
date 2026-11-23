@@ -192,7 +192,11 @@ function createAutopilot({ store, call, now = () => new Date(), sleep = (ms) => 
     let cardText = hook || '', headline = '';
     if (mode === 'tweet') {
       headline = hook || '';
-      const rx = await call('POST', `/api/content/reaction/${proc.postId}`, { headline, caption }, userId, 3 * 60 * 1000);
+      let rx = null;
+      for (let i = 0; ; i++) {   // the AI can come back empty once in a while: try up to 3 times
+        try { rx = await call('POST', `/api/content/reaction/${proc.postId}`, { headline, caption }, userId, 3 * 60 * 1000); break; }
+        catch (e) { if (e.stopped || i >= 2) throw e; await sleep(2000); }
+      }
       cardText = rx.reaction;
     }
 
@@ -315,3 +319,4 @@ function startAutopilot() {
 }
 
 module.exports = { createAutopilot, getAutopilot, startAutopilot, computeSlots, dueIndex, normalizeUrl, mergeOptions, verifyRules, fullFrame, safeTz, localToUtc, localYMD, SLOT_EXPIRY_MS, MAX_ATTEMPTS, FAIL_PAUSE_AT };
+    
