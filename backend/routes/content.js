@@ -9,6 +9,7 @@ const { transcribeVideo, segmentsToSRT } = require('../services/transcription');
 const { generateContent, generateSubtitleLines, generateReaction } = require('../services/captionGenerator');
 const { enhanceVideo, renderFramed, renderTweet, detectContentRect } = require('../services/videoProcessor');
 const remoteRender = require('../services/remoteRender');
+const { ensureReactColumns } = require('../services/ensureColumns');
 const { renderCard, renderHeadlineCard, renderTweetCard } = require('../services/brandCard');
 const { assessClip, extractCredit } = require('../services/contentGuard');
 const logger = require('../services/logger');
@@ -322,6 +323,7 @@ router.post('/enhance/:postId', heavy(async (req, res, next) => {
     if (tweetMode) {
       const reaction = String(brandCard.text || '').trim();
       if (!reaction) return res.status(400).json({ error: 'Write the reaction comment first. It goes in the tweet card under the video.' });
+      await ensureReactColumns();
       const acct = (account_id || post.account_id) ? await getDB().get('SELECT * FROM accounts WHERE id=$1', [account_id || post.account_id]) : null;
       if (!acct) return res.status(400).json({ error: 'Pick a page first. Its reaction profile is used on the tweet card.' });
       const uid = req.headers['x-user-id'];
