@@ -1,4 +1,5 @@
 const express = require('express');
+const { ensureReactColumns } = require('../services/ensureColumns');
 const { checkAccountAccess } = require('../middleware/auth');
 const { v4: uuidv4 } = require('uuid');
 const { getDB } = require('../models/db');
@@ -48,9 +49,10 @@ async function updateSheetAccount(userId, username) {
 // GET all accounts — filtered by user
 router.get('/', async (req, res, next) => {
   try {
+    await ensureReactColumns();
     const userId = req.headers['x-user-id'];
     const accounts = await getDB().all(
-      `SELECT id, name, username, ig_user_id, access_token, token_scopes, fallback_username, fallback_session_path, fallback_connected_at, caption_style, caption_prompt, brand_name, brand_handle, brand_verified, brand_avatar, brand_theme, ig_avatar, created_at, token_connected_at,
+      `SELECT id, name, username, ig_user_id, access_token, token_scopes, fallback_username, fallback_session_path, fallback_connected_at, caption_style, caption_prompt, brand_name, brand_handle, brand_verified, brand_avatar, brand_theme, react_name, react_handle, react_verified, react_avatar, ig_avatar, created_at, token_connected_at,
               CASE WHEN access_token IS NOT NULL AND access_token <> '' THEN 1 ELSE 0 END as has_token
        FROM accounts WHERE user_id=$1 ORDER BY created_at DESC`,
       [userId]
@@ -147,6 +149,7 @@ router.post('/:id/avatar', async (req, res, next) => {
 
 router.put('/:id', async (req, res, next) => {
   try {
+    await ensureReactColumns();
     const { caption_style, caption_prompt, access_token, token_scopes, name } = req.body;
     const db = getDB();
     { const bad = await checkAccountAccess(db, req.params.id, req.headers['x-user-id']); if (bad) return res.status(bad.status).json({ error: bad.error }); }
@@ -174,6 +177,20 @@ router.put('/:id', async (req, res, next) => {
     }
     if (b.brand_verified !== undefined) add('brand_verified', b.brand_verified === true || b.brand_verified === 1 || b.brand_verified === 'true' ? 1 : 0);
     if (b.brand_theme !== undefined)    add('brand_theme', b.brand_theme === 'light' ? 'light' : 'dark');
+    // Reaction profile: a FICTIONAL profile shown on the tweet card of the Reaction layout (never the page's own)
+    if (b.react_name !== undefined)   add('react_name', String(b.react_name || '').trim().slice(0, 50) || null);
+    if (b.react_handle !== undefined) {
+      const h = String(b.react_handle || '').trim().replace(/^@+/, '');
+      if (h && !/^[A-Za-z0-9._]{1,30}$/.test(h)) return res.status(400).json({ error: 'Reaction handle can only use letters, numbers, dots and underscores.' });
+      add('react_handle', h || null);
+    }
+    if (b.react_verified !== undefined) add('react_verified', b.react_verified === true || b.react_verified === 1 || b.react_verified === 'true' ? 1 : 0);
+    if (b.react_avatar !== undefined) {
+      const av = String(b.react_avatar || '');
+      if (av && (!/^data:image\/(png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/.test(av) || av.length > 140000))
+        return res.status(400).json({ error: 'Profile picture must be a small PNG/JPG/WebP image.' });
+      add('react_avatar', av || null);
+    }
     if (b.brand_avatar !== undefined) {
       const av = String(b.brand_avatar || '');
       if (av && (!/^data:image\/(png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/.test(av) || av.length > 140000))
